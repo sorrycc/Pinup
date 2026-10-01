@@ -26,7 +26,8 @@ struct ProcessingOptions: Sendable {
 /// Image work, all through ImageIO so nothing is decoded that doesn't need to be.
 /// Runs off the main thread.
 enum ImageProcessing {
-    static let thumbnailPixels = 360
+    /// Enough for the widest History tile on a Retina display.
+    static let thumbnailPixels = 480
 
     static func prepare(_ source: URL, name: String, options: ProcessingOptions, scratch: URL) throws -> PreparedFile {
         guard let image = CGImageSourceCreateWithURL(source as CFURL, nil),

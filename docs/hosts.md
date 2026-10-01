@@ -20,7 +20,7 @@ Pinup signs each upload with AWS Signature Version 4 and sends it as a single `P
 | Region | The bucket's region. `auto` for R2 |
 | Bucket | The bucket name |
 | Path-style addressing | `endpoint/bucket/key` instead of `bucket.endpoint/key` |
-| Access key, Secret key | An access key allowed to `PutObject` in the bucket |
+| Access key ID, Secret access key | An access key allowed to `PutObject` in the bucket |
 | File path | Where files land in the bucket, from the placeholders below |
 | Public URL | The address files are served from. Empty uses the object's own URL |
 

@@ -262,20 +262,41 @@ final class StatusItemController: NSObject, NSMenuDelegate, NSWindowDelegate, NS
         row.keyEquivalentModifierMask = hotKey.modifiers
     }
 
-    /// A rounded 28-point thumbnail, drawn when the menu shows it.
+    /// The last few menu thumbnails, so opening the menu again decodes nothing.
+    private static let menuThumbnails: NSCache<NSUUID, NSImage> = {
+        let cache = NSCache<NSUUID, NSImage>()
+        cache.countLimit = 12
+        return cache
+    }()
+
+    /// A rounded 28-point thumbnail, drawn the first time the menu shows it.
     private static func menuThumbnail(_ entry: HistoryEntry) -> NSImage? {
+        if let cached = menuThumbnails.object(forKey: entry.id as NSUUID) { return cached }
         guard let url = entry.thumbnailURL, let source = NSImage(contentsOf: url) else {
             return NSImage(systemSymbolName: "doc", accessibilityDescription: nil)
         }
+        // Drawn once into a small 2x bitmap, so the cache holds a few kilobytes
+        // per entry rather than the source image and a drawing block.
         let side: CGFloat = 28
-        return NSImage(size: NSSize(width: side, height: side), flipped: false) { rect in
-            NSBezierPath(roundedRect: rect, xRadius: 6, yRadius: 6).addClip()
-            let size = source.size
-            let scale = max(side / max(size.width, 1), side / max(size.height, 1))
-            let drawn = NSSize(width: size.width * scale, height: size.height * scale)
-            source.draw(in: NSRect(x: (side - drawn.width) / 2, y: (side - drawn.height) / 2, width: drawn.width, height: drawn.height))
-            return true
-        }
+        let pixels = Int(side * 2)
+        guard let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: pixels, pixelsHigh: pixels, bitsPerSample: 8, samplesPerPixel: 4,
+            hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)
+        else { return nil }
+        rep.size = NSSize(width: side, height: side)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        let rect = NSRect(x: 0, y: 0, width: side, height: side)
+        NSBezierPath(roundedRect: rect, xRadius: 6, yRadius: 6).addClip()
+        let size = source.size
+        let scale = max(side / max(size.width, 1), side / max(size.height, 1))
+        let drawn = NSSize(width: size.width * scale, height: size.height * scale)
+        source.draw(in: NSRect(x: (side - drawn.width) / 2, y: (side - drawn.height) / 2, width: drawn.width, height: drawn.height))
+        NSGraphicsContext.restoreGraphicsState()
+        let image = NSImage(size: rep.size)
+        image.addRepresentation(rep)
+        menuThumbnails.setObject(image, forKey: entry.id as NSUUID)
+        return image
     }
 
     @objc private func copyRecent(_ sender: NSMenuItem) {

@@ -29,6 +29,7 @@ final class HistoryWindowController: NSWindowController, NSWindowDelegate, NSToo
         window.isReleasedWhenClosed = false
         window.setFrameAutosaveName("History")
         window.toolbarStyle = .unified
+        window.tabbingMode = .disallowed
         super.init(window: window)
         window.delegate = self
 
@@ -60,8 +61,7 @@ final class HistoryWindowController: NSWindowController, NSWindowDelegate, NSToo
     // MARK: Layout
 
     private func buildContent() {
-        let layout = NSCollectionViewFlowLayout()
-        layout.itemSize = NSSize(width: HistoryItem.width, height: HistoryItem.height)
+        let layout = HistoryGridLayout()
         layout.minimumInteritemSpacing = 16
         layout.minimumLineSpacing = 20
         layout.sectionInset = NSEdgeInsets(top: 4, left: 24, bottom: 24, right: 24)
@@ -347,15 +347,51 @@ final class ClosureMenuItem: NSMenuItem {
     @objc private func run() { handler() }
 }
 
+// MARK: - Grid
+
+/// A flow layout whose tiles widen to fill the window edge to edge: as many
+/// columns as fit at a comfortable width, each column the same width.
+@MainActor
+private final class HistoryGridLayout: NSCollectionViewFlowLayout {
+    static let minimumItemWidth: CGFloat = 176
+    static let maximumItemWidth: CGFloat = 240
+
+    /// The width the item size was last worked out for.
+    private var laidOutWidth: CGFloat = -1
+
+    override func prepare() {
+        if let collectionView, collectionView.bounds.width > 0 {
+            laidOutWidth = collectionView.bounds.width
+            let available = laidOutWidth - sectionInset.left - sectionInset.right
+            let spacing = minimumInteritemSpacing
+            let fit = Int((available + spacing) / (Self.minimumItemWidth + spacing))
+            let needed = Int(ceil((available + spacing) / (Self.maximumItemWidth + spacing)))
+            let columns = max(1, max(fit, needed))
+            let width = max(80, floor((available - spacing * CGFloat(columns - 1)) / CGFloat(columns)))
+            let size = NSSize(width: width, height: HistoryItem.height(forWidth: width))
+            if size != itemSize { itemSize = size }
+        }
+        super.prepare()
+    }
+
+    override func shouldInvalidateLayout(forBoundsChange newBounds: NSRect) -> Bool {
+        newBounds.width != laidOutWidth
+    }
+}
+
 // MARK: - Item
 
 /// One upload: a rounded thumbnail with hover buttons, its name, and its size and time.
 @MainActor
 private final class HistoryItem: NSCollectionViewItem {
     static let identifier = NSUserInterfaceItemIdentifier("HistoryItem")
-    static let width: CGFloat = 176
-    static let height: CGFloat = 176
-    static let tileHeight: CGFloat = 132
+    /// Tiles are 4:3, with two lines of text under them.
+    static let tileAspect: CGFloat = 0.75
+    static let textHeight: CGFloat = 44
+
+    static func height(forWidth width: CGFloat) -> CGFloat {
+        (width * tileAspect).rounded() + textHeight
+    }
 
     var onCopy: (() -> Void)?
     var onOpen: (() -> Void)?
@@ -407,7 +443,7 @@ private final class HistoryItem: NSCollectionViewItem {
             tile.topAnchor.constraint(equalTo: root.topAnchor),
             tile.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             tile.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            tile.heightAnchor.constraint(equalToConstant: Self.tileHeight),
+            tile.heightAnchor.constraint(equalTo: tile.widthAnchor, multiplier: Self.tileAspect),
             nameLabel.topAnchor.constraint(equalTo: tile.bottomAnchor, constant: 8),
             nameLabel.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 2),
             nameLabel.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -2),
@@ -730,8 +766,8 @@ final class ThumbnailCache {
     private var generation = 0
 
     init() {
-        // A decoded 360-pixel thumbnail is about 0.4 MB.
-        cache.totalCostLimit = 48 << 20
+        // A decoded 480-pixel thumbnail is about 0.7 MB.
+        cache.totalCostLimit = 64 << 20
         cache.countLimit = 200
     }
 

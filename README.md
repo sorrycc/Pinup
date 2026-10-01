@@ -100,9 +100,10 @@ Settings are in the `dev.sorrycc.pinup` user defaults. Secrets are kept in a fil
 scripts/selftest.sh                # logic, S3 signing and window smoke tests
 swift scripts/make-icon.swift      # redraw Resources/Pinup.icns
 open build/Pinup.app --args -appearance light -show history
+PINUP_HOME=/tmp/pinup-test build/Pinup.app/Contents/MacOS/Pinup -show history
 ```
 
-`-show` takes `history`, `welcome`, `general`, `hosts` or `shortcuts`. `-appearance` takes `light` or `dark`.
+`-show` takes `history`, `welcome`, `general`, `hosts` or `shortcuts`. `-appearance` takes `light` or `dark`. `PINUP_HOME` points the app at another folder for history, thumbnails and secrets. Settings still come from the app's user defaults, so for a fully separate copy build one with its own bundle identifier, which `scripts/bundle.sh` takes from `PINUP_BUNDLE_ID`, and its own output folder from `PINUP_OUT`.
 
 ## Project layout
 

@@ -168,6 +168,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.window?.makeKeyAndOrderFront(nil)
     }
 
+    @objc func showAbout(_ sender: Any?) {
+        NSApp.activate()
+        let credits = NSMutableAttributedString(
+            string: "Upload images from the menu bar and paste the link anywhere.\n",
+            attributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.secondaryLabelColor])
+        credits.append(NSAttributedString(
+            string: "Native AppKit, no dependencies.",
+            attributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.tertiaryLabelColor]))
+        NSApp.orderFrontStandardAboutPanel(options: [.credits: credits])
+    }
+
     @objc func showSettings(_ sender: Any?) {
         let controller = settingsController ?? SettingsWindowController()
         settingsController = controller

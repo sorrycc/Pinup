@@ -23,6 +23,7 @@ final class SettingsWindowController: NSWindowController {
         window.styleMask = [.titled, .closable]
         window.toolbarStyle = .preference
         window.isReleasedWhenClosed = false
+        window.tabbingMode = .disallowed
         window.center()
         super.init(window: window)
     }
@@ -36,12 +37,18 @@ final class SettingsWindowController: NSWindowController {
     }
 }
 
-/// A two-column form: right-aligned labels, controls on the right, and short
-/// notes under some controls.
+// MARK: - Form building blocks
+
+/// A pane is a column of grouped sections, like System Settings: each
+/// section is a rounded card of rows, with an optional note under it.
 @MainActor
 class SettingsPane: NSViewController {
-    let grid = NSGridView()
-    static let controlWidth: CGFloat = 340
+    static let width: CGFloat = 560
+    static let margin: CGFloat = 20
+    static let cardWidth = width - margin * 2
+    static let fieldWidth: CGFloat = 280
+
+    let stack = NSStackView()
 
     init(title: String) {
         super.init(nibName: nil, bundle: nil)
@@ -52,53 +59,81 @@ class SettingsPane: NSViewController {
 
     override func loadView() {
         let view = NSView()
-        Self.style(grid)
-        grid.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(grid)
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 18
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(stack)
         NSLayoutConstraint.activate([
-            grid.topAnchor.constraint(equalTo: view.topAnchor, constant: 22),
-            grid.bottomAnchor.constraint(lessThanOrEqualTo: view.bottomAnchor, constant: -22),
-            grid.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 24),
-            grid.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -24),
+            view.widthAnchor.constraint(equalToConstant: Self.width),
+            stack.topAnchor.constraint(equalTo: view.topAnchor, constant: Self.margin),
+            // Not pinned to the bottom: the window is sized to the stack, never
+            // the other way round, so cards keep their height while it animates.
+            stack.bottomAnchor.constraint(lessThanOrEqualTo: view.bottomAnchor, constant: -Self.margin),
+            stack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: Self.margin),
+            stack.widthAnchor.constraint(equalToConstant: Self.cardWidth),
         ])
         self.view = view
-        buildRows()
-        grid.column(at: 0).xPlacement = .trailing
+        buildSections()
+        preferredContentSize = fittingSize
+    }
+
+    /// The size that shows every visible card with the margins around them.
+    var fittingSize: NSSize {
         view.layoutSubtreeIfNeeded()
-        preferredContentSize = view.fittingSize
+        return NSSize(width: Self.width, height: stack.fittingSize.height + Self.margin * 2)
     }
 
-    static func style(_ grid: NSGridView) {
-        grid.rowSpacing = 10
-        grid.columnSpacing = 10
-        grid.rowAlignment = .firstBaseline
-    }
+    func buildSections() {}
 
-    func buildRows() {}
+    /// Adds a card of rows, and a note under it when `footer` is given.
+    @discardableResult
+    func addSection(_ rows: [NSView], footer: String? = nil) -> FormSection {
+        let section = FormSection(rows: rows)
+        stack.addArrangedSubview(section)
+        // Sized by their own constraints, which survive being hidden: the
+        // stack detaches hidden views, dropping any constraint to itself.
+        section.widthAnchor.constraint(equalToConstant: Self.cardWidth).isActive = true
+        if let footer {
+            let note = addFooter(footer)
+            section.footer = note
+            stack.setCustomSpacing(7, after: section)
+        }
+        return section
+    }
 
     @discardableResult
-    func addRow(_ label: String, _ control: NSView, to grid: NSGridView? = nil) -> NSGridRow {
-        (grid ?? self.grid).addRow(with: [NSTextField(labelWithString: label), control])
+    func addFooter(_ text: String) -> FormFooter {
+        let footer = FormFooter(text)
+        stack.addArrangedSubview(footer)
+        return footer
     }
 
-    func addNote(_ text: String, to grid: NSGridView? = nil) {
-        let note = Self.note(text)
-        let row = (grid ?? self.grid).addRow(with: [NSGridCell.emptyContentView, note])
-        row.topPadding = -5
-        row.bottomPadding = 6
+    /// Resizes the pane, and its window when showing, keeping the top edge
+    /// still, after rows appear or disappear.
+    func fitWindow() {
+        let size = fittingSize
+        preferredContentSize = size
+        guard let window = view.window, window.isVisible else { return }
+        let content = window.contentRect(forFrameRect: window.frame)
+        let delta = size.height - content.height
+        guard abs(delta) > 0.5 else { return }
+        var frame = window.frame
+        frame.size.height += delta
+        frame.origin.y -= delta
+        window.setFrame(frame, display: true, animate: true)
     }
 
-    func addSeparator(to grid: NSGridView? = nil) {
-        let grid = grid ?? self.grid
-        let row = grid.addRow(with: [NSGridCell.emptyContentView])
-        row.height = 8
+    /// Where tokens and keys are kept, for the notes that say so.
+    static var secretsNote: String {
+        "Saved in secrets.json in \((AppPaths.root.path as NSString).abbreviatingWithTildeInPath), readable only by you."
     }
 
     static func note(_ text: String = "") -> NSTextField {
         let label = NSTextField(wrappingLabelWithString: text)
         label.font = .systemFont(ofSize: 11)
         label.textColor = .secondaryLabelColor
-        label.preferredMaxLayoutWidth = controlWidth
+        label.preferredMaxLayoutWidth = cardWidth - 28
         return label
     }
 
@@ -106,7 +141,8 @@ class SettingsPane: NSViewController {
         let field = secure ? NSSecureTextField() : NSTextField()
         field.stringValue = value
         field.placeholderString = placeholder
-        field.widthAnchor.constraint(equalToConstant: controlWidth).isActive = true
+        field.controlSize = .regular
+        field.widthAnchor.constraint(equalToConstant: fieldWidth).isActive = true
         return field
     }
 
@@ -145,7 +181,7 @@ class SettingsPane: NSViewController {
             scroll.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -1),
             scroll.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 1),
             scroll.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -1),
-            box.widthAnchor.constraint(equalToConstant: controlWidth),
+            box.widthAnchor.constraint(equalToConstant: fieldWidth),
             box.heightAnchor.constraint(equalToConstant: CGFloat(lines) * 15 + 14),
         ])
         return (box, text)
@@ -164,64 +200,259 @@ class SettingsPane: NSViewController {
         button.action = action
         return button
     }
+
+    static func toggle(_ on: Bool, target: AnyObject, action: Selector) -> NSSwitch {
+        let toggle = NSSwitch()
+        toggle.state = on ? .on : .off
+        toggle.target = target
+        toggle.action = action
+        return toggle
+    }
 }
 
-// MARK: General
+/// The note under a card, inset a little from its edges.
+@MainActor
+final class FormFooter: NSView {
+    let label: NSTextField
+
+    init(_ text: String) {
+        label = SettingsPane.note(text)
+        super.init(frame: .zero)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(label)
+        NSLayoutConstraint.activate([
+            widthAnchor.constraint(equalToConstant: SettingsPane.cardWidth),
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
+            label.topAnchor.constraint(equalTo: topAnchor),
+            label.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+}
+
+/// A rounded card holding rows separated by hairlines.
+@MainActor
+final class FormSection: NSView {
+    /// The note under the card, hidden and shown with it.
+    weak var footer: FormFooter?
+
+    private let column = NSStackView()
+
+    init(rows: [NSView]) {
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.cornerRadius = 10
+        layer?.cornerCurve = .continuous
+        layer?.borderWidth = 1
+        column.orientation = .vertical
+        column.alignment = .leading
+        column.spacing = 0
+        column.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(column)
+        NSLayoutConstraint.activate([
+            column.topAnchor.constraint(equalTo: topAnchor),
+            column.bottomAnchor.constraint(equalTo: bottomAnchor),
+            column.leadingAnchor.constraint(equalTo: leadingAnchor),
+            column.trailingAnchor.constraint(equalTo: trailingAnchor),
+        ])
+        for (index, row) in rows.enumerated() {
+            if index > 0 {
+                let line = HairlineView()
+                column.addArrangedSubview(line)
+                NSLayoutConstraint.activate([
+                    line.leadingAnchor.constraint(equalTo: column.leadingAnchor, constant: 16),
+                    line.trailingAnchor.constraint(equalTo: column.trailingAnchor),
+                ])
+            }
+            column.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
+        }
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override var isHidden: Bool {
+        didSet { footer?.isHidden = isHidden }
+    }
+
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        // Light cards sit a little brighter than the window; dark ones a little lighter.
+        let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        layer?.backgroundColor = dark
+            ? NSColor.white.withAlphaComponent(0.055).cgColor
+            : NSColor.white.withAlphaComponent(0.62).cgColor
+        layer?.borderColor = dark
+            ? NSColor.white.withAlphaComponent(0.09).cgColor
+            : NSColor.black.withAlphaComponent(0.07).cgColor
+    }
+}
+
+/// A one-point line in the system separator colour.
+@MainActor
+final class HairlineView: NSView {
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        heightAnchor.constraint(equalToConstant: 1).isActive = true
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        layer?.backgroundColor = NSColor.separatorColor.cgColor
+    }
+}
+
+/// One row of a card: a title, an optional line of detail under it, and a
+/// control on the trailing edge.
+@MainActor
+final class FormRow: NSView {
+    let titleLabel = NSTextField(labelWithString: "")
+    let detailLabel = NSTextField(wrappingLabelWithString: "")
+    let control: NSView
+    private let text = NSStackView()
+
+    /// `top` puts the text level with the top of a tall control, like a text area.
+    init(_ title: String, detail: String? = nil, control: NSView, top: Bool = false) {
+        self.control = control
+        super.init(frame: .zero)
+        titleLabel.stringValue = title
+        titleLabel.font = .systemFont(ofSize: 13)
+        titleLabel.lineBreakMode = .byTruncatingTail
+        detailLabel.stringValue = detail ?? ""
+        detailLabel.font = .systemFont(ofSize: 11)
+        detailLabel.textColor = .secondaryLabelColor
+        detailLabel.isHidden = detail == nil
+        text.orientation = .vertical
+        text.alignment = .leading
+        text.spacing = 2
+        text.addArrangedSubview(titleLabel)
+        text.addArrangedSubview(detailLabel)
+        for view in [text, control] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(view)
+        }
+        text.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        control.setContentCompressionResistancePriority(.required, for: .horizontal)
+        control.setContentHuggingPriority(.required, for: .horizontal)
+        var constraints = [
+            heightAnchor.constraint(greaterThanOrEqualToConstant: 42),
+            text.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            text.topAnchor.constraint(greaterThanOrEqualTo: topAnchor, constant: 10),
+            text.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -10),
+            text.trailingAnchor.constraint(lessThanOrEqualTo: control.leadingAnchor, constant: -16),
+            control.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            control.topAnchor.constraint(greaterThanOrEqualTo: topAnchor, constant: 8),
+            control.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -8),
+        ]
+        if top {
+            constraints += [
+                control.topAnchor.constraint(equalTo: topAnchor, constant: 9),
+                titleLabel.firstBaselineAnchor.constraint(equalTo: control.topAnchor, constant: 15),
+            ]
+        } else {
+            constraints += [
+                text.centerYAnchor.constraint(equalTo: centerYAnchor),
+                control.centerYAnchor.constraint(equalTo: centerYAnchor),
+            ]
+        }
+        NSLayoutConstraint.activate(constraints)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    var detail: String? {
+        get { detailLabel.isHidden ? nil : detailLabel.stringValue }
+        set {
+            detailLabel.stringValue = newValue ?? ""
+            detailLabel.isHidden = newValue == nil
+        }
+    }
+
+    /// The detail wraps to whatever width is left beside the control.
+    override func layout() {
+        super.layout()
+        let width = max(40, control.frame.minX - 16 - 16)
+        if abs(detailLabel.preferredMaxLayoutWidth - width) > 0.5 {
+            detailLabel.preferredMaxLayoutWidth = width
+            detailLabel.invalidateIntrinsicContentSize()
+            needsLayout = true
+        }
+    }
+}
+
+// MARK: - General
 
 final class GeneralSettingsPane: SettingsPane {
     private var formatPopUp: NSPopUpButton?
     private var conversionPopUp: NSPopUpButton?
     private let quality = NSSlider(value: 0.85, minValue: 0.3, maxValue: 1, target: nil, action: nil)
     private let qualityLabel = NSTextField(labelWithString: "")
-    private let launchAtLogin = NSButton(checkboxWithTitle: "Open Pinup at login", target: nil, action: nil)
+    private var qualityRow: FormRow?
+    private var launchAtLogin: NSSwitch?
+    private var historyRow: FormRow?
 
     init() { super.init(title: "General") }
     required init?(coder: NSCoder) { fatalError() }
 
-    override func buildRows() {
+    override func buildSections() {
         let formatPopUp = Self.popUp(
             LinkFormat.allCases, title: { $0.displayName }, selected: Settings.linkFormat, target: self,
             action: #selector(formatChanged(_:)))
         self.formatPopUp = formatPopUp
-        addRow("Copy links as:", formatPopUp)
-        addNote("Markdown is ![name](url) and HTML is an <img> tag.")
+        addSection(
+            [FormRow("Copy links as", control: formatPopUp)],
+            footer: "Markdown is ![name](url) and HTML is an <img> tag. The menu bar's Copy As menu changes this too.")
 
         let conversionPopUp = Self.popUp(
             ImageConversion.allCases, title: { $0.displayName }, selected: Settings.conversion, target: self,
             action: #selector(conversionChanged(_:)))
         self.conversionPopUp = conversionPopUp
-        addRow("Convert images to:", conversionPopUp)
         quality.doubleValue = Settings.quality
         quality.target = self
         quality.action = #selector(qualityChanged(_:))
-        quality.widthAnchor.constraint(equalToConstant: 200).isActive = true
+        quality.isContinuous = true
+        quality.widthAnchor.constraint(equalToConstant: 180).isActive = true
         qualityLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
         qualityLabel.textColor = .secondaryLabelColor
-        let qualityRow = NSStackView(views: [quality, qualityLabel])
-        qualityRow.spacing = 8
-        addRow("Quality:", qualityRow)
-        addNote("Transparent images stay out of JPEG and animations are never converted.")
+        qualityLabel.alignment = .right
+        qualityLabel.widthAnchor.constraint(equalToConstant: 36).isActive = true
+        let qualityControls = NSStackView(views: [quality, qualityLabel])
+        qualityControls.spacing = 8
+        let qualityRow = FormRow("Quality", detail: "For JPEG and HEIC.", control: qualityControls)
+        self.qualityRow = qualityRow
+        addSection(
+            [FormRow("Convert images to", control: conversionPopUp), qualityRow],
+            footer: "Transparent images stay out of JPEG, and animations are never converted.")
         updateQuality()
 
-        let strip = NSButton(checkboxWithTitle: "Remove location from photos", target: self, action: #selector(stripChanged(_:)))
-        strip.state = Settings.stripLocation ? .on : .off
-        addRow("Privacy:", strip)
-        addNote("Drops GPS data. JPEG pixels stay untouched; other formats are rewritten at full quality.")
+        let strip = Self.toggle(Settings.stripLocation, target: self, action: #selector(stripChanged(_:)))
+        let sound = Self.toggle(Settings.playSound, target: self, action: #selector(soundChanged(_:)))
+        let launch = Self.toggle(SMAppService.mainApp.status == .enabled, target: self, action: #selector(launchChanged(_:)))
+        launchAtLogin = launch
+        addSection([
+            FormRow(
+                "Remove location from photos",
+                detail: "Drops GPS data before upload. JPEG pixels stay untouched; other formats are rewritten at full quality.",
+                control: strip),
+            FormRow("Play a sound when links are copied", control: sound),
+            FormRow("Open Pinup at login", control: launch),
+        ])
 
-        let sound = NSButton(checkboxWithTitle: "Play a sound when links are copied", target: self, action: #selector(soundChanged(_:)))
-        sound.state = Settings.playSound ? .on : .off
-        addRow("Feedback:", sound)
-
-        launchAtLogin.target = self
-        launchAtLogin.action = #selector(launchChanged(_:))
-        launchAtLogin.state = SMAppService.mainApp.status == .enabled ? .on : .off
-        addRow("Startup:", launchAtLogin)
-
-        addSeparator()
         let clear = NSButton(title: "Clear History…", target: self, action: #selector(clearHistory(_:)))
-        addRow("History:", clear)
-        addNote("Removes the list and thumbnails. Uploaded files stay on their host.")
+        let historyRow = FormRow("Upload history", detail: "", control: clear)
+        self.historyRow = historyRow
+        addSection([historyRow], footer: "Clearing removes the list and its thumbnails. The uploaded files stay on their host.")
+        updateHistory()
+
         NotificationCenter.default.addObserver(self, selector: #selector(refresh), name: .settingsDidChange, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(updateHistory), name: .historyDidChange, object: nil)
     }
 
     override func viewWillAppear() {
@@ -233,8 +464,17 @@ final class GeneralSettingsPane: SettingsPane {
     @objc private func refresh() {
         formatPopUp?.selectItem(at: LinkFormat.allCases.firstIndex(of: Settings.linkFormat) ?? 0)
         conversionPopUp?.selectItem(at: ImageConversion.allCases.firstIndex(of: Settings.conversion) ?? 0)
-        launchAtLogin.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        launchAtLogin?.state = SMAppService.mainApp.status == .enabled ? .on : .off
         updateQuality()
+    }
+
+    @objc private func updateHistory() {
+        let entries = History.shared.entries
+        let bytes = entries.reduce(0) { $0 + $1.size }
+        historyRow?.detail = entries.isEmpty
+            ? "No uploads yet."
+            : "\(entries.count) upload\(entries.count == 1 ? "" : "s"), \(ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)) in all."
+        (historyRow?.control as? NSButton)?.isEnabled = !entries.isEmpty
     }
 
     @objc private func formatChanged(_ sender: NSPopUpButton) {
@@ -250,20 +490,32 @@ final class GeneralSettingsPane: SettingsPane {
         updateQuality()
     }
 
+    /// The label follows the drag; the setting is saved when the mouse goes up.
     @objc private func qualityChanged(_ sender: NSSlider) {
+        if NSApp.currentEvent?.type == .leftMouseDragged {
+            qualityLabel.stringValue = Self.percent(sender.doubleValue)
+            return
+        }
         Settings.quality = sender.doubleValue
         updateQuality()
     }
 
-    private func updateQuality() {
-        qualityLabel.stringValue = "\(Int((Settings.quality * 100).rounded()))%"
-        quality.isEnabled = Settings.conversion != .original
+    private static func percent(_ value: Double) -> String {
+        "\(Int((value * 100).rounded()))%"
     }
 
-    @objc private func stripChanged(_ sender: NSButton) { Settings.stripLocation = sender.state == .on }
-    @objc private func soundChanged(_ sender: NSButton) { Settings.playSound = sender.state == .on }
+    private func updateQuality() {
+        qualityLabel.stringValue = Self.percent(Settings.quality)
+        let enabled = Settings.conversion != .original
+        quality.isEnabled = enabled
+        qualityRow?.titleLabel.textColor = enabled ? .labelColor : .tertiaryLabelColor
+        qualityLabel.textColor = enabled ? .secondaryLabelColor : .tertiaryLabelColor
+    }
 
-    @objc private func launchChanged(_ sender: NSButton) {
+    @objc private func stripChanged(_ sender: NSSwitch) { Settings.stripLocation = sender.state == .on }
+    @objc private func soundChanged(_ sender: NSSwitch) { Settings.playSound = sender.state == .on }
+
+    @objc private func launchChanged(_ sender: NSSwitch) {
         do {
             if sender.state == .on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
         } catch {
@@ -273,9 +525,10 @@ final class GeneralSettingsPane: SettingsPane {
     }
 
     @objc private func clearHistory(_ sender: Any?) {
+        let count = History.shared.entries.count
         let alert = NSAlert()
         alert.messageText = "Clear upload history?"
-        alert.informativeText = "This removes \(History.shared.entries.count) entries and their thumbnails. The files stay on their hosts."
+        alert.informativeText = "This removes \(count) upload\(count == 1 ? "" : "s") and \(count == 1 ? "its" : "their") thumbnails from the list. The files stay on their hosts."
         alert.addButton(withTitle: "Clear")
         alert.addButton(withTitle: "Cancel")
         alert.buttons.first?.hasDestructiveAction = true
@@ -286,19 +539,18 @@ final class GeneralSettingsPane: SettingsPane {
     }
 }
 
-// MARK: Hosts
+// MARK: - Hosts
 
 final class HostsSettingsPane: SettingsPane, NSTextFieldDelegate, NSTextViewDelegate {
     static let paneTitle = "Hosts"
-    static let labelWidth: CGFloat = 112
 
-    private var forms: [HostKind: NSGridView] = [:]
+    private var sections: [HostKind: [FormSection]] = [:]
     private var hostPopUp: NSPopUpButton?
     private var shownHost: HostKind?
-    private let formBox = NSView()
     private let testButton = NSButton(title: "Test Upload", target: nil, action: nil)
     private let testSpinner = NSProgressIndicator()
-    private let testResult = SettingsPane.note()
+    private var testRow: FormRow?
+    private static let testHint = "Uploads a small image to check the host."
 
     // pic.sorrycc.com
     private let picToken = SettingsPane.field("", placeholder: "Token", secure: true)
@@ -308,7 +560,7 @@ final class HostsSettingsPane: SettingsPane, NSTextFieldDelegate, NSTextViewDele
     private let s3Bucket = SettingsPane.field("", placeholder: "my-images")
     private let s3AccessKey = SettingsPane.field("", placeholder: "Access key ID")
     private let s3Secret = SettingsPane.field("", placeholder: "Secret access key", secure: true)
-    private let s3PathStyle = NSButton(checkboxWithTitle: "Path-style addressing (R2, MinIO)", target: nil, action: nil)
+    private var s3PathStyle: NSSwitch!
     private let s3Key = SettingsPane.field("", placeholder: "{year}/{month}/{timestamp}-{random}.{ext}")
     private let s3Public = SettingsPane.field("", placeholder: "https://img.example.com")
     // Custom
@@ -324,7 +576,7 @@ final class HostsSettingsPane: SettingsPane, NSTextFieldDelegate, NSTextViewDele
     init() { super.init(title: Self.paneTitle) }
     required init?(coder: NSCoder) { fatalError() }
 
-    override func buildRows() {
+    override func buildSections() {
         let host = Self.popUp(
             HostKind.allCases, title: { $0.displayName }, selected: Settings.host, target: self,
             action: #selector(hostChanged(_:)))
@@ -332,44 +584,26 @@ final class HostsSettingsPane: SettingsPane, NSTextFieldDelegate, NSTextViewDele
             host.item(at: index)?.image = NSImage(systemSymbolName: kind.symbol, accessibilityDescription: nil)
         }
         hostPopUp = host
-        addRow("Upload to:", host)
-        addSeparator()
+        addSection([FormRow("Upload to", control: host)])
 
-        forms[.picSorrycc] = picForm()
-        forms[.s3] = s3Form()
-        forms[.custom] = customForm()
-        // Every form sits in one box, which takes the height of the one
-        // shown; the window grows or shrinks to fit when the host changes.
-        for form in forms.values {
-            form.translatesAutoresizingMaskIntoConstraints = false
-            formBox.addSubview(form)
-            NSLayoutConstraint.activate([
-                form.topAnchor.constraint(equalTo: formBox.topAnchor),
-                form.leadingAnchor.constraint(equalTo: formBox.leadingAnchor),
-                form.trailingAnchor.constraint(lessThanOrEqualTo: formBox.trailingAnchor),
-            ])
-        }
-        let formRow = grid.addRow(with: [formBox])
-        formRow.mergeCells(in: NSRange(location: 0, length: 2))
-        formRow.cell(at: 0).xPlacement = .fill
+        sections[.picSorrycc] = picSections()
+        sections[.s3] = s3Sections()
+        sections[.custom] = customSections()
 
         testButton.target = self
         testButton.action = #selector(test(_:))
         testSpinner.style = .spinning
         testSpinner.controlSize = .small
         testSpinner.isDisplayedWhenStopped = false
-        let testRow = NSStackView(views: [testButton, testSpinner])
-        testRow.spacing = 8
-        addRow("", testRow)
-        testResult.isSelectable = true
-        let note = grid.addRow(with: [NSGridCell.emptyContentView, testResult])
-        note.topPadding = -4
-        testResult.heightAnchor.constraint(greaterThanOrEqualToConstant: 28).isActive = true
+        let testControls = NSStackView(views: [testSpinner, testButton])
+        testControls.spacing = 8
+        let testRow = FormRow("Test the connection", detail: Self.testHint, control: testControls)
+        testRow.detailLabel.isSelectable = true
+        self.testRow = testRow
+        addSection([testRow])
 
-        // The same width as the forms' labels, so every control lines up.
-        grid.column(at: 0).width = Self.labelWidth
         load()
-        showForm()
+        showSections()
         NotificationCenter.default.addObserver(self, selector: #selector(hostMayHaveChanged), name: .settingsDidChange, object: nil)
     }
 
@@ -377,70 +611,46 @@ final class HostsSettingsPane: SettingsPane, NSTextFieldDelegate, NSTextViewDele
     @objc private func hostMayHaveChanged() {
         guard Settings.host != shownHost else { return }
         hostPopUp?.selectItem(at: HostKind.allCases.firstIndex(of: Settings.host) ?? 0)
-        showForm()
+        showSections()
     }
 
-    private func form() -> NSGridView {
-        let form = NSGridView(numberOfColumns: 2, rows: 0)
-        Self.style(form)
-        return form
-    }
-
-    /// Labels in every form share one width so the controls line up with
-    /// "Upload to:" above.
-    private func label(_ text: String) -> NSTextField {
-        let label = NSTextField(labelWithString: text)
-        label.alignment = .right
-        label.widthAnchor.constraint(equalToConstant: Self.labelWidth).isActive = true
-        return label
-    }
-
-    private func row(_ form: NSGridView, _ text: String, _ control: NSView) {
-        let row = form.addRow(with: [label(text), control])
-        // A text area's label sits level with its first line.
-        if control is TextAreaBox, let label = row.cell(at: 0).contentView {
-            row.rowAlignment = .none
-            row.cell(at: 1).yPlacement = .top
-            let cell = row.cell(at: 0)
-            cell.yPlacement = .none
-            cell.customPlacementConstraints = [label.topAnchor.constraint(equalTo: control.topAnchor, constant: 5)]
-        }
-    }
-
-    private func note(_ form: NSGridView, _ text: String) {
-        let row = form.addRow(with: [NSGridCell.emptyContentView, Self.note(text)])
-        row.topPadding = -5
-        row.bottomPadding = 4
-    }
-
-    private func picForm() -> NSGridView {
-        let form = form()
+    private func picSections() -> [FormSection] {
         picToken.delegate = self
-        row(form, "Token:", picToken)
-        note(form, "Sent as a Bearer token. Tokens and keys are saved in secrets.json in ~/Library/Application Support/Pinup, readable only by you.")
-        return form
+        return [
+            addSection(
+                [FormRow("Token", control: picToken)],
+                footer: "Sent as a Bearer token. " + Self.secretsNote)
+        ]
     }
 
-    private func s3Form() -> NSGridView {
-        let form = form()
+    private func s3Sections() -> [FormSection] {
         for field in [s3Endpoint, s3Region, s3Bucket, s3AccessKey, s3Secret, s3Key, s3Public] { field.delegate = self }
-        row(form, "Endpoint:", s3Endpoint)
-        row(form, "Region:", s3Region)
-        row(form, "Bucket:", s3Bucket)
-        s3PathStyle.target = self
-        s3PathStyle.action = #selector(saveS3)
-        row(form, "", s3PathStyle)
-        row(form, "Access key:", s3AccessKey)
-        row(form, "Secret key:", s3Secret)
-        row(form, "File path:", s3Key)
-        note(form, "{year} {month} {day} {timestamp} {random} {name} {ext}")
-        row(form, "Public URL:", s3Public)
-        note(form, "Your CDN or public bucket domain. Use {key} to place the path, or leave empty for the object's own URL.")
-        return form
+        s3PathStyle = Self.toggle(true, target: self, action: #selector(saveS3))
+        return [
+            addSection(
+                [
+                    FormRow("Endpoint", control: s3Endpoint),
+                    FormRow("Region", control: s3Region),
+                    FormRow("Bucket", control: s3Bucket),
+                    FormRow("Path-style addressing", detail: "endpoint/bucket/key. R2 and MinIO need it.", control: s3PathStyle),
+                ],
+                footer: "Works with AWS S3, Cloudflare R2, Aliyun OSS, Tencent COS, MinIO and other S3-compatible services."),
+            addSection(
+                [
+                    FormRow("Access key ID", control: s3AccessKey),
+                    FormRow("Secret access key", control: s3Secret),
+                ],
+                footer: Self.secretsNote),
+            addSection(
+                [
+                    FormRow("File path", detail: "{year} {month} {day} {timestamp} {random} {name} {ext}", control: s3Key),
+                    FormRow("Public URL", control: s3Public),
+                ],
+                footer: "The public URL is your CDN or public bucket domain. Use {key} to place the path, or leave it empty for the object's own URL."),
+        ]
     }
 
-    private func customForm() -> NSGridView {
-        let form = form()
+    private func customSections() -> [FormSection] {
         customURL.delegate = self
         customMethod.addItems(withTitles: ["POST", "PUT"])
         customMethod.target = self
@@ -450,28 +660,36 @@ final class HostsSettingsPane: SettingsPane, NSTextFieldDelegate, NSTextViewDele
             action: #selector(saveCustom))
         let request = NSStackView(views: [customMethod, customBody])
         request.spacing = 8
-        row(form, "URL:", customURL)
-        note(form, "{name} is replaced by the file's name.")
-        row(form, "Request:", request)
-        note(form, "Multipart sends a form; JSON sends the file in base64; Raw File sends it as the body.")
         customField.delegate = self
-        row(form, "File field:", customField)
-        let (fieldsScroll, fields) = Self.textArea("", placeholder: "key=value", lines: 2)
+        let (fieldsBox, fields) = Self.textArea("", placeholder: "key=value", lines: 2)
         customFields = fields
         fields.delegate = self
-        row(form, "Extra fields:", fieldsScroll)
-        note(form, "One key=value per line.")
-        let (headersScroll, headers) = Self.textArea("", placeholder: "Authorization: Bearer …", lines: 2)
+        let (headersBox, headers) = Self.textArea("", placeholder: "Authorization: Bearer …", lines: 2)
         customHeaders = headers
         headers.delegate = self
-        row(form, "Headers:", headersScroll)
-        note(form, "One Name: value per line.")
         customPath.delegate = self
-        row(form, "Link at:", customPath)
-        note(form, "A path into the JSON reply, like data.url or data.0.src. Empty takes the whole reply.")
         customPrefix.delegate = self
-        row(form, "Link prefix:", customPrefix)
-        return form
+        return [
+            addSection(
+                [
+                    FormRow("URL", detail: "{name} is replaced by the file's name.", control: customURL),
+                    FormRow("Request", control: request),
+                ],
+                footer: "Multipart sends a form; JSON sends the file in base64; Raw File sends it as the body."),
+            addSection(
+                [
+                    FormRow("File field", detail: "The form field or JSON key for the file.", control: customField),
+                    FormRow("Extra fields", detail: "One key=value per line.", control: fieldsBox, top: true),
+                    FormRow("Headers", detail: "One Name: value per line.", control: headersBox, top: true),
+                ],
+                footer: "Headers usually carry the token. " + Self.secretsNote),
+            addSection(
+                [
+                    FormRow("Link at", control: customPath),
+                    FormRow("Link prefix", control: customPrefix),
+                ],
+                footer: "A path into the JSON reply, like data.url or data.0.src. Empty takes the whole reply. The prefix goes before the value, for APIs that return a path."),
+        ]
     }
 
     private func load() {
@@ -495,40 +713,20 @@ final class HostsSettingsPane: SettingsPane, NSTextFieldDelegate, NSTextViewDele
         customPrefix.stringValue = custom.urlPrefix
     }
 
-    private var formHeight: NSLayoutConstraint?
-
-    private func showForm() {
+    private func showSections() {
         shownHost = Settings.host
-        for (kind, form) in forms { form.isHidden = kind != Settings.host }
-        testResult.stringValue = ""
-        formHeight?.isActive = false
-        if let form = forms[Settings.host] {
-            formHeight = formBox.bottomAnchor.constraint(equalTo: form.bottomAnchor)
-            formHeight?.isActive = true
+        for (kind, list) in sections {
+            for section in list { section.isHidden = kind != Settings.host }
         }
+        showTestResult(Self.testHint)
         fitWindow()
-    }
-
-    /// Resizes the pane, and its window when showing, keeping the top edge still.
-    private func fitWindow() {
-        view.layoutSubtreeIfNeeded()
-        let size = view.fittingSize
-        preferredContentSize = size
-        guard let window = view.window, window.isVisible else { return }
-        let content = window.contentRect(forFrameRect: window.frame)
-        let delta = size.height - content.height
-        guard abs(delta) > 0.5 else { return }
-        var frame = window.frame
-        frame.size.height += delta
-        frame.origin.y -= delta
-        window.setFrame(frame, display: true, animate: true)
     }
 
     @objc private func hostChanged(_ sender: NSPopUpButton) {
         if let raw = sender.selectedItem?.representedObject as? String, let kind = HostKind(rawValue: raw) {
             Settings.host = kind
         }
-        showForm()
+        showSections()
     }
 
     func controlTextDidChange(_ obj: Notification) {
@@ -577,36 +775,40 @@ final class HostsSettingsPane: SettingsPane, NSTextFieldDelegate, NSTextViewDele
         save()
         testButton.isEnabled = false
         testSpinner.startAnimation(nil)
-        Self.show("Uploading a small test image…", in: testResult)
+        showTestResult("Uploading a small test image…")
         let host = Uploader.currentHost()
+        let kind = Settings.host
         Task {
             let result = await Uploader.shared.test(host)
             testButton.isEnabled = true
             testSpinner.stopAnimation(nil)
+            // The form may have changed to another host meanwhile.
+            guard kind == shownHost else { return }
             switch result {
-            case .success(let url): Self.show("Works: \(url)", in: testResult, color: .systemGreen)
-            case .failure(let error): Self.show(error.localizedDescription, in: testResult, color: .systemRed)
+            case .success(let url): showTestResult("Works. \(url)", color: .systemGreen)
+            case .failure(let error): showTestResult(error.localizedDescription, color: .systemRed)
             }
         }
     }
 
-    private static func show(_ text: String, in label: NSTextField, color: NSColor = .secondaryLabelColor) {
-        label.stringValue = text
-        label.textColor = color
+    private func showTestResult(_ text: String, color: NSColor = .secondaryLabelColor) {
+        testRow?.detail = text
+        testRow?.detailLabel.textColor = color
+        fitWindow()
     }
 }
 
-// MARK: Shortcuts
+// MARK: - Shortcuts
 
 final class ShortcutsSettingsPane: SettingsPane {
     private let clipboard = HotKeyRecorder()
     private let screenshot = HotKeyRecorder()
-    private let status = SettingsPane.note()
+    private var status: FormFooter?
 
     init() { super.init(title: "Shortcuts") }
     required init?(coder: NSCoder) { fatalError() }
 
-    override func buildRows() {
+    override func buildSections() {
         clipboard.hotKey = Settings.clipboardHotKey
         clipboard.onRecord = { [weak self] hotKey in
             guard let self, self.accept(hotKey, other: Settings.screenshotHotKey, otherName: "Capture screenshot") else { return }
@@ -621,10 +823,16 @@ final class ShortcutsSettingsPane: SettingsPane {
             self.screenshot.hotKey = hotKey
             self.check()
         }
-        addRow("Upload clipboard:", clipboard)
-        addRow("Capture screenshot:", screenshot)
-        addNote("Work from any app. Click one, then press a combination with ⌘, ⌃ or ⌥. Delete clears it.")
-        addRow("", status)
+        addSection(
+            [
+                FormRow("Upload clipboard", detail: "Copied files, or the image on the clipboard.", control: clipboard),
+                FormRow("Capture screenshot", detail: "Pick an area or a window, like ⇧⌘4.", control: screenshot),
+            ],
+            footer: "Both work from any app. Click a shortcut, then press a combination with ⌘, ⌃ or ⌥. Press Delete to clear it.")
+        let status = addFooter("")
+        status.label.textColor = .systemRed
+        status.isHidden = true
+        self.status = status
         check()
     }
 
@@ -632,20 +840,20 @@ final class ShortcutsSettingsPane: SettingsPane {
     private func accept(_ hotKey: HotKey?, other: HotKey?, otherName: String) -> Bool {
         guard let hotKey, hotKey == other else { return true }
         NSSound.beep()
-        status.stringValue = "\(hotKey.displayString) is already used for \(otherName)."
-        status.textColor = .systemRed
+        show("\(hotKey.displayString) is already used for \(otherName).")
         return false
     }
 
     /// Says when another app already holds a combination.
     private func check() {
         let failed = (NSApp.delegate as? AppDelegate)?.failedHotKeys ?? []
-        if failed.isEmpty {
-            status.stringValue = ""
-        } else {
-            status.stringValue = "\(failed.joined(separator: " and ")) is taken by another app. Pick another combination."
-            status.textColor = .systemRed
-        }
+        show(failed.isEmpty ? nil : "\(failed.joined(separator: " and ")) is taken by another app. Pick another combination.")
+    }
+
+    private func show(_ message: String?) {
+        status?.label.stringValue = message ?? ""
+        status?.isHidden = message == nil
+        fitWindow()
     }
 }
 
@@ -662,7 +870,7 @@ final class TextAreaBox: NSView {
     override var wantsUpdateLayer: Bool { true }
 
     override func updateLayer() {
-        layer?.cornerRadius = 8
+        layer?.cornerRadius = 6
         layer?.cornerCurve = .continuous
         layer?.borderWidth = 1
         layer?.borderColor = NSColor.separatorColor.cgColor

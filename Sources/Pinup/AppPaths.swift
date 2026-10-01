@@ -1,10 +1,16 @@
 import Foundation
 
-/// Where Pinup keeps its files: ~/Library/Application Support/Pinup.
+/// Where Pinup keeps its files: ~/Library/Application Support/Pinup, or
+/// the folder in `PINUP_HOME`, so tests and screenshots can use their own.
 enum AppPaths {
     static let root: URL = {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        let url = base.appendingPathComponent("Pinup", isDirectory: true)
+        let url: URL
+        if let home = ProcessInfo.processInfo.environment["PINUP_HOME"], !home.isEmpty {
+            url = URL(fileURLWithPath: (home as NSString).expandingTildeInPath, isDirectory: true)
+        } else {
+            let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            url = base.appendingPathComponent("Pinup", isDirectory: true)
+        }
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
     }()

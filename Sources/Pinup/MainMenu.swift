@@ -8,7 +8,7 @@ enum MainMenu {
         let main = NSMenu()
 
         let app = NSMenu(title: "Pinup")
-        app.addItem(withTitle: "About Pinup", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        app.addItem(withTitle: "About Pinup", action: #selector(AppDelegate.showAbout(_:)), keyEquivalent: "")
         app.addItem(.separator())
         app.addItem(withTitle: "Settings…", action: #selector(AppDelegate.showSettings(_:)), keyEquivalent: ",")
         app.addItem(.separator())

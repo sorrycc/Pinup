@@ -143,17 +143,20 @@ final class HotKeyCenter {
     }
 }
 
-/// A button that records a hot key: click it, then press the combination.
-/// Escape cancels and Delete clears.
+/// A field that records a hot key: click it, then press the combination.
+/// Escape cancels, Delete or the clear button removes it.
 @MainActor
 final class HotKeyRecorder: NSButton {
-    var hotKey: HotKey? { didSet { updateTitle() } }
-    /// Called with the combination pressed, or nil for Delete.
+    var hotKey: HotKey? { didSet { update() } }
+    /// Called with the combination pressed, or nil when cleared.
     var onRecord: ((HotKey?) -> Void)?
+
+    private let clearButton = NSButton()
+    private var hasFocus = false
 
     private var isRecording = false {
         didSet {
-            updateTitle()
+            update()
             guard isRecording != oldValue else { return }
             if isRecording { HotKeyCenter.shared.suspend() } else { HotKeyCenter.shared.resume() }
         }
@@ -161,19 +164,53 @@ final class HotKeyRecorder: NSButton {
 
     init() {
         super.init(frame: .zero)
-        bezelStyle = .push
+        isBordered = false
+        setButtonType(.momentaryChange)
+        focusRingType = .none
+        wantsLayer = true
+        layer?.cornerRadius = 7
+        layer?.cornerCurve = .continuous
+        layer?.borderWidth = 1
         target = self
         action = #selector(clicked(_:))
-        widthAnchor.constraint(greaterThanOrEqualToConstant: 140).isActive = true
-        updateTitle()
+        setAccessibilityLabel("Keyboard shortcut")
+
+        let image = NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: "Clear shortcut")!
+            .withSymbolConfiguration(.init(pointSize: 12, weight: .semibold).applying(.init(hierarchicalColor: .tertiaryLabelColor)))
+        clearButton.image = image
+        clearButton.isBordered = false
+        clearButton.imagePosition = .imageOnly
+        clearButton.toolTip = "Clear shortcut"
+        clearButton.target = self
+        clearButton.action = #selector(clearClicked(_:))
+        clearButton.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(clearButton)
+        NSLayoutConstraint.activate([
+            widthAnchor.constraint(equalToConstant: 168),
+            heightAnchor.constraint(equalToConstant: 28),
+            clearButton.widthAnchor.constraint(equalToConstant: 20),
+            clearButton.heightAnchor.constraint(equalToConstant: 20),
+            clearButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -5),
+            clearButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+        update()
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
     override var acceptsFirstResponder: Bool { true }
 
+    override func becomeFirstResponder() -> Bool {
+        let accepted = super.becomeFirstResponder()
+        hasFocus = accepted
+        update()
+        return accepted
+    }
+
     override func resignFirstResponder() -> Bool {
+        hasFocus = false
         isRecording = false
+        update()
         return super.resignFirstResponder()
     }
 
@@ -191,6 +228,11 @@ final class HotKeyRecorder: NSButton {
         }
     }
 
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        update()
+    }
+
     @objc private func stopRecording() {
         isRecording = false
     }
@@ -198,6 +240,11 @@ final class HotKeyRecorder: NSButton {
     @objc private func clicked(_ sender: Any?) {
         isRecording.toggle()
         if isRecording { window?.makeFirstResponder(self) }
+    }
+
+    @objc private func clearClicked(_ sender: Any?) {
+        isRecording = false
+        onRecord?(nil)
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
@@ -230,7 +277,46 @@ final class HotKeyRecorder: NSButton {
         onRecord?(hotKey)
     }
 
-    private func updateTitle() {
-        title = isRecording ? "Type Shortcut…" : hotKey?.displayString ?? "None"
+    /// The field looks like a text field, with the combination in the
+    /// middle. While recording its border takes the accent colour.
+    private func update() {
+        let text: String
+        let color: NSColor
+        if isRecording {
+            text = "Type shortcut…"
+            color = .controlAccentColor
+        } else if let hotKey {
+            text = hotKey.displayString
+            color = .labelColor
+        } else {
+            text = "Click to record"
+            color = .placeholderTextColor
+        }
+        let showsClear = hotKey != nil && !isRecording
+        let style = NSMutableParagraphStyle()
+        style.alignment = .center
+        // Centred in the space beside the clear button, never under it.
+        style.headIndent = showsClear ? 26 : 0
+        style.firstLineHeadIndent = style.headIndent
+        style.tailIndent = showsClear ? -26 : 0
+        let title = NSAttributedString(string: text, attributes: [
+            .font: NSFont.systemFont(ofSize: 13, weight: showsClear ? .medium : .regular),
+            .foregroundColor: color,
+            .paragraphStyle: style,
+        ])
+        attributedTitle = title
+        // The same while pressed, so the text never blinks away.
+        attributedAlternateTitle = title
+        clearButton.isHidden = !showsClear
+        setAccessibilityValue(hotKey?.displayString ?? "None")
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            layer?.backgroundColor = dark
+                ? NSColor.white.withAlphaComponent(0.06).cgColor
+                : NSColor.textBackgroundColor.cgColor
+            let focused = isRecording || hasFocus
+            layer?.borderWidth = focused ? 2 : 1
+            layer?.borderColor = focused ? NSColor.controlAccentColor.cgColor : NSColor.separatorColor.cgColor
+        }
     }
 }
