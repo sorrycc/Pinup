@@ -37,6 +37,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         registerHotKeys()
         NotificationCenter.default.addObserver(
             self, selector: #selector(settingsChanged), name: .settingsDidChange, object: nil)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(windowWillClose(_:)), name: NSWindow.willCloseNotification, object: nil)
 
         // `-show history` or `-show <settings pane>` opens a window at launch.
         switch UserDefaults.standard.string(forKey: "show")?.lowercased() {
@@ -89,6 +91,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
+    /// Closing the last window hands the menu bar back to the previous app.
+    /// Otherwise an accessory app stays active with nothing on screen, and
+    /// its menus linger over the desktop.
+    @objc private func windowWillClose(_ notification: Notification) {
+        guard let closing = notification.object as? NSWindow, closing.styleMask.contains(.titled) else { return }
+        DispatchQueue.main.async {
+            let stillOpen = NSApp.windows.contains { $0 !== closing && $0.isVisible && $0.styleMask.contains(.titled) }
+            if !stillOpen { NSApp.hide(nil) }
+        }
+    }
 
     // MARK: Hot keys
 
