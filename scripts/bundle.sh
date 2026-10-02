@@ -7,7 +7,9 @@ CONFIG="${1:-release}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="${PINUP_OUT:-$ROOT/build}"
 APP="$OUT/Pinup.app"
-BUNDLE_ID="${PINUP_BUNDLE_ID:-dev.sorrycc.pinup}"
+# Not dev.sorrycc.pinup: macOS 26 keeps that identity's menu bar item hidden
+# for good, on this Mac, and nothing short of a new identity brings it back.
+BUNDLE_ID="${PINUP_BUNDLE_ID:-dev.sorrycc.pinup.app}"
 VERSION="0.1.0"
 
 echo "==> swift build ($CONFIG)"
@@ -21,6 +23,7 @@ cp "$SWIFT_OUT/Pinup" "$APP/Contents/MacOS/Pinup"
 # Debug builds keep their symbols for the debugger.
 [ "$CONFIG" = "release" ] && strip -x "$APP/Contents/MacOS/Pinup"
 cp "$ROOT/Resources/Pinup.icns" "$APP/Contents/Resources/Pinup.icns"
+cp "$ROOT/Resources/MenuBarIcon.png" "$ROOT/Resources/MenuBarIcon@2x.png" "$APP/Contents/Resources/"
 
 # LSUIElement keeps Pinup out of the Dock. The document types let images
 # be dropped on the app or opened with it, which uploads them, and the

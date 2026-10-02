@@ -81,7 +81,15 @@ final class StatusItemController: NSObject, NSMenuDelegate, NSWindowDelegate, NS
     private static func icon(_ look: Look) -> NSImage {
         let symbol: String
         switch look {
-        case .idle: symbol = "pin"
+        case .idle:
+            // A pinned photo with an upload badge, at 1x and 2x.
+            if let image = Bundle.main.image(forResource: "MenuBarIcon") {
+                image.size = NSSize(width: 18, height: 18)
+                image.isTemplate = true
+                image.accessibilityDescription = "Pinup"
+                return image
+            }
+            symbol = "pin"
         case .dropTarget: symbol = "arrow.up.circle.fill"
         case .done: symbol = "checkmark.circle"
         case .failed: symbol = "exclamationmark.triangle"
