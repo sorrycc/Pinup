@@ -32,9 +32,12 @@ struct UploadFailure: Error {
     }
 }
 
-/// Reports bytes sent for one upload.
+/// Reports bytes sent for one upload, at most 30 times a second and always
+/// at the end. URLSession calls in for every chunk it writes, far more often
+/// than the icon can show.
 private final class ProgressDelegate: NSObject, URLSessionTaskDelegate, Sendable {
     let onProgress: @Sendable (Int64, Int64) -> Void
+    private let lastReport = OSAllocatedUnfairLock(initialState: CFAbsoluteTime(0))
 
     init(_ onProgress: @escaping @Sendable (Int64, Int64) -> Void) {
         self.onProgress = onProgress
@@ -44,13 +47,21 @@ private final class ProgressDelegate: NSObject, URLSessionTaskDelegate, Sendable
         _ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64, totalBytesSent: Int64,
         totalBytesExpectedToSend: Int64
     ) {
-        onProgress(totalBytesSent, totalBytesExpectedToSend)
+        let now = CFAbsoluteTimeGetCurrent()
+        let finished = totalBytesSent >= totalBytesExpectedToSend
+        let due = lastReport.withLock { last in
+            guard finished || now - last > 1.0 / 30 else { return false }
+            last = now
+            return true
+        }
+        if due { onProgress(totalBytesSent, totalBytesExpectedToSend) }
     }
 }
 
-/// Runs uploads: up to three at a time, each prepared and sent off the main
-/// thread, with combined progress for the menu bar icon. When a batch ends its
-/// links go to the clipboard together and a HUD confirms it.
+/// Runs uploads: up to three at a time across every batch, each prepared and
+/// sent off the main thread, with combined progress for the menu bar icon.
+/// When a batch ends its links go to the clipboard together and a HUD
+/// confirms it.
 @MainActor
 final class Uploader {
     static let shared = Uploader()
@@ -62,12 +73,36 @@ final class Uploader {
     var onFinish: ((Bool) -> Void)?
     /// Opens Settings > Hosts, for failures a retry can't fix.
     var openHostSettings: (() -> Void)?
+    /// Called once, the next time nothing is uploading. For a quit that waits.
+    var onIdle: (() -> Void)?
 
-    private var active: [UUID: (sent: Int64, total: Int64)] = [:]
+    /// One file of the batches in flight. Finished files stay until every
+    /// file is done, so the ring only moves forward as they finish.
+    private struct Tracked {
+        /// The file's size, which is how much of the ring it gets.
+        var weight: Int64
+        var fraction = 0.0
+        var finished = false
+    }
+
+    /// A batch in flight: what is still on its way and what has arrived, so
+    /// a quit in the middle of it loses neither.
+    private struct Batch {
+        var waiting: [UUID: UploadSource]
+        var uploaded: [(index: Int, entry: HistoryEntry)] = []
+    }
+
+    private var tracked: [UUID: Tracked] = [:]
+    private var batches: [UUID: Batch] = [:]
     private var lastReport = Date.distantPast
+    /// Upload slots not in use, and the uploads waiting for one, first come
+    /// first served.
+    private var freeSlots = concurrency
+    private var slotWaiters: [CheckedContinuation<Void, Never>] = []
 
-    var isBusy: Bool { !active.isEmpty }
-    var activeCount: Int { active.count }
+    var isBusy: Bool { !tracked.isEmpty || !batches.isEmpty }
+    /// Files still uploading or waiting their turn.
+    var activeCount: Int { tracked.values.count(where: { !$0.finished }) }
     private(set) var progress: Double = 0
     /// Why the last batch failed, until a later upload succeeds. The menu
     /// shows it, for a HUD that went unseen.
@@ -77,8 +112,9 @@ final class Uploader {
 
     private static let session: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
+        // A minute of silence ends an upload. There is no limit on the whole
+        // transfer: a large file on a slow line takes as long as it takes.
         configuration.timeoutIntervalForRequest = 60
-        configuration.timeoutIntervalForResource = 600
         configuration.httpMaximumConnectionsPerHost = concurrency
         return URLSession(configuration: configuration)
     }()
@@ -93,6 +129,13 @@ final class Uploader {
     }
 
     func upload(_ sources: [UploadSource]) {
+        // Folders can't upload, however they got here: `open -a Pinup`, a
+        // pinup:// link or a retry.
+        let files = sources.filter { (try? $0.url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) != true }
+        if files.isEmpty, !sources.isEmpty {
+            HUD.shared.showMessage("Folders can't be uploaded", "Choose the files inside instead.", symbol: "folder.fill")
+        }
+        let sources = files
         guard !sources.isEmpty else { return }
         log.info("uploading \(sources.count, privacy: .public) file(s)")
         let host = Self.currentHost()
@@ -155,25 +198,74 @@ final class Uploader {
 
     private func run(_ sources: [UploadSource], host: any UploadHost, options: ProcessingOptions, format: LinkFormat) async {
         var results: [(Int, Result<HistoryEntry, UploadFailure>)] = []
+        let ids = sources.map { _ in UUID() }
+        let batch = UUID()
+        batches[batch] = Batch(waiting: Dictionary(uniqueKeysWithValues: zip(ids, sources)))
+        begin(ids, sources)
         await withTaskGroup(of: (Int, Result<HistoryEntry, UploadFailure>).self) { group in
             for (index, source) in sources.enumerated() {
-                if index >= Self.concurrency, let done = await group.next() {
-                    results.append(done)
-                }
-                let id = UUID()
-                begin(id)
+                // In order, and before anything is read, converted or signed.
+                await takeSlot()
+                let id = ids[index]
                 let progress = Self.reporter(id)
                 group.addTask {
                     let result = await Self.perform(
                         source, id: id, host: host, options: options, keepThumbnail: true, progress: progress)
-                    await MainActor.run { Uploader.shared.end(id) }
+                    await MainActor.run { Uploader.shared.finished(id, index: index, result: result, batch: batch) }
                     return (index, result)
                 }
             }
             for await done in group { results.append(done) }
         }
+        // Nil when a quit took the batch over, which has recorded it already.
+        guard batches.removeValue(forKey: batch) != nil else { return }
         results.sort { $0.0 < $1.0 }
         finish(results.map(\.1), format: format)
+    }
+
+    /// One file is done: its slot goes to the next in line, and its batch
+    /// notes the outcome right away, in case a quit comes before the rest.
+    private func finished(_ id: UUID, index: Int, result: Result<HistoryEntry, UploadFailure>, batch: UUID) {
+        returnSlot()
+        let source = batches[batch]?.waiting.removeValue(forKey: id)
+        if case .success(let entry) = result {
+            batches[batch]?.uploaded.append((index, entry))
+            // Only now that the upload is on record does its screenshot or
+            // pasted image go.
+            if let source, source.isTemporary {
+                Task.detached(priority: .utility) { Self.removeTemporary(source.url) }
+            }
+        }
+        end(id)
+    }
+
+    /// Waits for one of the three upload slots, shared by every batch.
+    private func takeSlot() async {
+        if freeSlots > 0 {
+            freeSlots -= 1
+            return
+        }
+        await withCheckedContinuation { slotWaiters.append($0) }
+    }
+
+    /// Hands the slot to the upload that has waited longest, if any.
+    private func returnSlot() {
+        if slotWaiters.isEmpty {
+            freeSlots += 1
+        } else {
+            slotWaiters.removeFirst().resume()
+        }
+    }
+
+    /// For a quit in the middle of uploads. Files that already arrived go
+    /// into History, and screenshots and pasted images still on their way
+    /// move to the Failed folder, where the next launch offers them again.
+    func abandon() {
+        for batch in batches.values {
+            History.shared.add(batch.uploaded.sorted { $0.index < $1.index }.map(\.entry))
+            for source in batch.waiting.values where source.isTemporary { _ = Self.keep(source) }
+        }
+        batches = [:]
     }
 
     private func finish(_ results: [Result<HistoryEntry, UploadFailure>], format: LinkFormat) {
@@ -212,17 +304,27 @@ final class Uploader {
             HUD.shared.showSuccess(last, count: entries.count, format: format)
         }
         onFinish?(failures.isEmpty)
+        if !isBusy, let idle = onIdle {
+            onIdle = nil
+            idle()
+        }
     }
 
     // MARK: Progress
 
-    private func begin(_ id: UUID) {
-        active[id] = (0, 0)
+    /// Starts tracking a batch, each file weighed by its size.
+    private func begin(_ ids: [UUID], _ sources: [UploadSource]) {
+        for (id, source) in zip(ids, sources) {
+            let size = (try? source.url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+            tracked[id] = Tracked(weight: Int64(max(size, 1)))
+        }
         report(force: true)
     }
 
     private func end(_ id: UUID) {
-        active[id] = nil
+        tracked[id]?.fraction = 1
+        tracked[id]?.finished = true
+        if tracked.values.allSatisfy(\.finished) { tracked = [:] }
         report(force: true)
     }
 
@@ -233,8 +335,8 @@ final class Uploader {
     }
 
     private func progressed(_ id: UUID, sent: Int64, total: Int64) {
-        guard active[id] != nil else { return }
-        active[id] = (sent, total)
+        guard let file = tracked[id], !file.finished, total > 0 else { return }
+        tracked[id]?.fraction = min(1, Double(sent) / Double(total))
         report(force: false)
     }
 
@@ -243,14 +345,20 @@ final class Uploader {
         let now = Date()
         guard force || now.timeIntervalSince(lastReport) > 1.0 / 30 else { return }
         lastReport = now
-        guard !active.isEmpty else {
+        guard !tracked.isEmpty else {
             onProgress?(nil)
             return
         }
-        let total = active.values.reduce(Int64(0)) { $0 + max($1.total, 1) }
-        let sent = active.values.reduce(Int64(0)) { $0 + $1.sent }
-        progress = min(1, Double(sent) / Double(total))
+        progress = Self.combinedProgress(tracked.values.map { ($0.weight, $0.fraction) })
         onProgress?(progress)
+    }
+
+    /// Each file's fraction, weighed by its size.
+    nonisolated static func combinedProgress(_ files: [(weight: Int64, fraction: Double)]) -> Double {
+        let total = files.reduce(Int64(0)) { $0 + $1.weight }
+        guard total > 0 else { return 0 }
+        let done = files.reduce(0.0) { $0 + Double($1.weight) * $1.fraction }
+        return min(1, max(0, done / Double(total)))
     }
 
     // MARK: Work off the main thread
@@ -272,7 +380,6 @@ final class Uploader {
                 let name = id.uuidString + (isPNG ? ".png" : ".jpg")
                 if (try? data.write(to: AppPaths.thumbnails.appendingPathComponent(name))) != nil { thumbnail = name }
             }
-            if source.isTemporary { removeTemporary(source.url) }
             return .success(HistoryEntry(
                 id: id, url: link, name: file.name, host: host.name, size: file.size, width: file.width,
                 height: file.height, date: Date(), thumbnail: thumbnail))
@@ -332,6 +439,10 @@ final class Uploader {
                     throw UploadError.http(http.statusCode, type(of: host).errorText(data))
                 }
                 return data
+            } catch let error as URLError where error.code == .appTransportSecurityRequiresSecureConnection {
+                let name = request.request.url?.host ?? "this server"
+                throw UploadError.notConfigured(
+                    "macOS blocks plain http:// to \(name). Use https://, or the server's IP address.")
             } catch let error as URLError where attempt == 1 && retryable.contains(error.code) {
                 log.error("\(error.localizedDescription, privacy: .public), retrying")
                 try await Task.sleep(for: .seconds(1))

@@ -10,7 +10,7 @@ A small macOS menu bar app that uploads images and puts the link on your clipboa
 
 - **Menu bar pin.** Drop files on it, or click it for recent uploads, history and settings. While files upload it shows their progress as a ring.
 - **Upload from anywhere.** ⌥⇧⌘U uploads the image or files on the clipboard. ⌥⇧⌘S captures part of the screen and uploads it. Both are changeable.
-- **Links ready to paste.** Copied as Markdown, a plain URL or an HTML `<img>` tag, with a glass confirmation under the pin.
+- **Links ready to paste.** Copied as Markdown, a plain URL or an HTML `<img>` tag, with a glass confirmation under the pin. It stays while the pointer rests on it.
 - **Three kinds of host.** pic.sorrycc.com, any S3-compatible bucket (AWS S3, Cloudflare R2, Aliyun OSS, Tencent COS, MinIO), or any HTTP upload API you describe.
 - **Image handling.** Optional conversion to JPEG or HEIC at a chosen quality, and location data removed from photos before they leave the Mac.
 - **History.** Every upload with its thumbnail, grouped by day and searchable. Click a tile to copy its link, double-click to open it, drag it into another app. Removing one can be undone.
@@ -44,9 +44,11 @@ On first launch Pinup shows a welcome window. Choose a host in Settings > Hosts 
 | Menu > Upload Files… (⌘O) | Files you choose |
 | `open -a Pinup file.png` | The file |
 
-Up to three files upload at once. When a batch finishes, all its links go to the clipboard, one per line, and the pin shows a check. A failed upload is retried once after a dropped connection, a timeout or a server error.
+Up to three files upload at once, in the order they were given. When a batch finishes, all its links go to the clipboard, one per line, and the pin shows a check. A failed upload is retried once after a dropped connection, a timeout or a server error.
 
 When an upload still fails, the pin shows a warning and the confirmation explains why. Clicking it tries again, or opens Settings when the host needs fixing. Screenshots and pasted images that failed are kept, even across restarts, until the menu's Retry or Discard.
+
+Quitting while files upload asks whether to wait for them. Quitting at once keeps the links that already arrived, and any screenshot or pasted image still on its way is offered again at the next launch.
 
 Screenshots need the Screen Recording permission, which macOS asks for the first time.
 
@@ -61,7 +63,7 @@ Menu > Show History (⌘Y) opens every past upload, newest first.
 | Drag a tile out | Drops the link into another app |
 | ⌘C | Copies the selected links, one per line |
 | Delete | Removes the selection from History; ⌘Z puts it back |
-| ⌘F | Searches names and links |
+| ⌘F | Searches names and links, whatever the case or accents |
 | Right-click | Copy as any format, open, or remove |
 
 Removing an upload only removes it from the list. The file stays on its host.
@@ -92,18 +94,18 @@ Everything lives in `~/Library/Application Support/Pinup`:
 | `secrets.json` | Tokens, S3 secret key and custom headers, readable only by you |
 | `Failed/` | Screenshots and pasted images whose upload failed, until retried or discarded |
 
-Settings are in the `dev.sorrycc.pinup` user defaults. Secrets are kept in a file rather than the keychain. An ad-hoc signed app loses keychain access every time it is rebuilt, and macOS then asks for your login password.
+Settings are in the `dev.sorrycc.pinup.app` user defaults. Secrets are kept in a file rather than the keychain. An ad-hoc signed app loses keychain access every time it is rebuilt, and macOS then asks for your login password.
 
 ## Development
 
 ```sh
-scripts/selftest.sh                # logic, S3 signing and window smoke tests
+scripts/selftest.sh                # logic, S3 signing and window smoke tests, in a temporary folder
 swift scripts/make-icon.swift      # redraw Resources/Pinup.icns
 open build/Pinup.app --args -appearance light -show history
 PINUP_HOME=/tmp/pinup-test build/Pinup.app/Contents/MacOS/Pinup -show history
 ```
 
-`-show` takes `history`, `welcome`, `general`, `hosts` or `shortcuts`. `-appearance` takes `light` or `dark`. `PINUP_HOME` points the app at another folder for history, thumbnails and secrets. Settings still come from the app's user defaults, so for a fully separate copy build one with its own bundle identifier, which `scripts/bundle.sh` takes from `PINUP_BUNDLE_ID`, and its own output folder from `PINUP_OUT`.
+`-show` takes `history`, `welcome`, `general`, `hosts` or `shortcuts`, and for checking the design `menu`, `hud` or `hud-failure`, which open the menu bar menu or a sample confirmation. `-appearance` takes `light` or `dark`. `PINUP_HOME` points the app at another folder for history, thumbnails and secrets. Settings still come from the app's user defaults, so for a fully separate copy build one with its own bundle identifier, which `scripts/bundle.sh` takes from `PINUP_BUNDLE_ID`, and its own output folder from `PINUP_OUT`.
 
 ## Project layout
 

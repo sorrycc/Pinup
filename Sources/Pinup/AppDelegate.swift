@@ -46,11 +46,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             showHistory(nil)
         case "welcome":
             showWelcome()
+        case let debug? where ["menu", "hud", "hud-failure"].contains(debug):
+            // Once the status item has its place in the menu bar.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in self?.showForDesign(debug) }
         case let pane? where ["general", "hosts", "shortcuts"].contains(pane):
             showSettings(nil)
             settingsController?.showPane(titled: pane.capitalized)
         default:
             if !WelcomeWindowController.wasShown { showWelcome() }
+        }
+    }
+
+    /// `-show menu`, `hud` or `hud-failure`: the surfaces no window holds, for
+    /// checking the design.
+    private func showForDesign(_ what: String) {
+        switch what {
+        case "menu":
+            statusItem?.openMenu()
+        case "hud":
+            if let entry = History.shared.entries.first {
+                HUD.shared.showSuccess(entry, count: 1, format: Settings.linkFormat)
+            } else {
+                HUD.shared.showMessage("Nothing to upload", "Copy an image or a file first.", symbol: "doc.on.clipboard")
+            }
+        default:
+            HUD.shared.showFailure(
+                "Screenshot.png: The server answered 401 Unauthorized.", hint: "Click to open Settings.")
         }
     }
 
@@ -91,6 +112,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
+    /// Quitting while files upload asks first, so no screenshot or finished
+    /// link is lost without a word.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        let uploader = Uploader.shared
+        guard uploader.isBusy else { return .terminateNow }
+        // Asked again while already waiting for the uploads: still waiting.
+        if uploader.onIdle != nil { return .terminateLater }
+        NSApp.activate()
+        let count = max(1, uploader.activeCount)
+        let alert = NSAlert()
+        alert.messageText = count == 1 ? "An upload is still in progress." : "\(count) uploads are still in progress."
+        alert.informativeText = "Pinup can quit as soon as \(count == 1 ? "it finishes" : "they finish"). Quitting now stops \(count == 1 ? "it" : "them"), and keeps screenshots and pasted images to try again next time."
+        alert.addButton(withTitle: "Quit When Finished")
+        alert.addButton(withTitle: "Quit Now")
+        alert.addButton(withTitle: "Cancel")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            // They may have finished while the question was up.
+            guard uploader.isBusy else { return .terminateNow }
+            uploader.onIdle = { NSApp.reply(toApplicationShouldTerminate: true) }
+            return .terminateLater
+        case .alertSecondButtonReturn:
+            uploader.abandon()
+            return .terminateNow
+        default:
+            return .terminateCancel
+        }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        History.shared.flush()
+    }
 
     /// Closing the last window hands the menu bar back to the previous app.
     /// Otherwise an accessory app stays active with nothing on screen, and

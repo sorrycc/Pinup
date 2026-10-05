@@ -1,4 +1,5 @@
 import AppKit
+import os
 
 /// One finished upload.
 struct HistoryEntry: Codable, Identifiable, Equatable, Sendable {
@@ -29,6 +30,14 @@ final class History {
 
     private(set) lazy var entries: [HistoryEntry] = load()
     private var saveTask: Task<Void, Never>?
+    /// Something changed since launch, so `flush` has a file to write.
+    private var hasChanges = false
+    /// Counts the changes, so an older save can never land on a newer one.
+    private var generation = 0
+    private nonisolated static let lastSaved = OSAllocatedUnfairLock(initialState: 0)
+    /// Set when history.json is there but can't be read or moved aside.
+    /// Nothing is saved then, so the file is never overwritten.
+    private var savingDisabled = false
     /// Thumbnails of removed entries, deleted by `pruneThumbnails` once undo is over.
     private var removedThumbnails: Set<String> = []
 
@@ -93,30 +102,74 @@ final class History {
 
     private func changed() {
         NotificationCenter.default.post(name: .historyDidChange, object: nil)
+        hasChanges = true
+        generation += 1
         saveTask?.cancel()
+        guard !savingDisabled else { return }
         let snapshot = entries
+        let generation = generation
         saveTask = Task.detached(priority: .utility) {
             try? await Task.sleep(for: .milliseconds(300))
             guard !Task.isCancelled else { return }
+            Self.write(snapshot, generation: generation)
+        }
+    }
+
+    /// Saves now and deletes the thumbnails of removed uploads, for when
+    /// Pinup quits: the delayed save and the History window's cleanup would
+    /// never get to run.
+    func flush() {
+        saveTask?.cancel()
+        guard hasChanges else { return }
+        if !savingDisabled { Self.write(entries, generation: generation) }
+        let used = Set(entries.compactMap(\.thumbnail))
+        for name in removedThumbnails.subtracting(used) {
+            try? FileManager.default.removeItem(at: AppPaths.thumbnails.appendingPathComponent(name))
+        }
+        removedThumbnails = []
+    }
+
+    /// One save at a time, and never one older than what is on disk: a
+    /// delayed save still encoding when Pinup quits must not undo the flush.
+    private nonisolated static func write(_ entries: [HistoryEntry], generation: Int) {
+        lastSaved.withLock { last in
+            guard generation > last else { return }
             let encoder = JSONEncoder()
             encoder.dateEncodingStrategy = .iso8601
-            if let data = try? encoder.encode(snapshot) {
-                try? data.write(to: AppPaths.history, options: .atomic)
+            if let data = try? encoder.encode(entries), (try? data.write(to: AppPaths.history, options: .atomic)) != nil {
+                last = generation
             }
         }
     }
 
     private func load() -> [HistoryEntry] {
-        guard let data = try? Data(contentsOf: AppPaths.history) else { return [] }
+        let data: Data
+        do {
+            data = try Data(contentsOf: AppPaths.history)
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+            return []
+        } catch {
+            setAsideUnreadable()
+            return []
+        }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         do {
             return try decoder.decode([HistoryEntry].self, from: data)
         } catch {
-            // Never let the next save overwrite a file that couldn't be read.
-            let backup = AppPaths.root.appendingPathComponent("history-unreadable-\(Int(Date().timeIntervalSince1970)).json")
-            try? FileManager.default.moveItem(at: AppPaths.history, to: backup)
+            setAsideUnreadable()
             return []
+        }
+    }
+
+    /// Never let the next save overwrite a file that couldn't be read: it is
+    /// moved aside, and if even that fails, saving is off until Pinup restarts.
+    private func setAsideUnreadable() {
+        let backup = AppPaths.root.appendingPathComponent("history-unreadable-\(Int(Date().timeIntervalSince1970)).json")
+        do {
+            try FileManager.default.moveItem(at: AppPaths.history, to: backup)
+        } catch {
+            savingDisabled = true
         }
     }
 

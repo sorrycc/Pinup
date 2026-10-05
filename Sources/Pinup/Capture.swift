@@ -14,22 +14,27 @@ enum Capture {
         if !files.isEmpty { return files }
         // Formats worth keeping as they are, before TIFF, which is converted.
         let direct: [(UTType, String)] = [(.png, "png"), (.jpeg, "jpg"), (.gif, "gif"), (.heic, "heic"), (.webP, "webp")]
-        var found: (data: Data, ext: String, convert: Bool)?
-        for (type, ext) in direct {
-            if let data = pasteboard.data(forType: NSPasteboard.PasteboardType(type.identifier)) {
-                found = (data, ext, false)
-                break
-            }
-        }
-        if found == nil, let tiff = pasteboard.data(forType: .tiff) { found = (tiff, "png", true) }
-        guard let found else { return [] }
-        let name = "Pasted Image \(stamp()).\(found.ext)"
+        let types = Set(pasteboard.types ?? [])
+        var candidates = direct.map { (type: NSPasteboard.PasteboardType($0.0.identifier), ext: $0.1, convert: false) }
+        candidates.append((.tiff, "png", true))
+        candidates.removeAll { !types.contains($0.type) }
+        guard !candidates.isEmpty else { return [] }
+        let stamp = stamp()
+        let change = pasteboard.changeCount
+        // The image itself is fetched off the main thread: a large one takes
+        // a while to cross from the app that copied it.
         let source = await Task.detached(priority: .userInitiated) { () -> UploadSource? in
-            let data = found.convert ? ImageProcessing.png(from: found.data) : found.data
-            guard let data else { return nil }
-            let url = AppPaths.scratch().appendingPathComponent(name)
-            guard (try? data.write(to: url)) != nil else { return nil }
-            return UploadSource(url: url, isTemporary: true)
+            let pasteboard = NSPasteboard.general
+            for candidate in candidates {
+                guard pasteboard.changeCount == change else { return nil }
+                guard let found = pasteboard.data(forType: candidate.type),
+                    let data = candidate.convert ? ImageProcessing.png(from: found) : found
+                else { continue }
+                let url = AppPaths.scratch().appendingPathComponent("Pasted Image \(stamp).\(candidate.ext)")
+                guard (try? data.write(to: url)) != nil else { return nil }
+                return UploadSource(url: url, isTemporary: true)
+            }
+            return nil
         }.value
         return source.map { [$0] } ?? []
     }

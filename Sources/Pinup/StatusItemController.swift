@@ -38,10 +38,23 @@ final class StatusItemController: NSObject, NSMenuDelegate, NSWindowDelegate, NS
         }
     }
 
-    /// The icon's frame on screen, for the HUD.
+    /// The icon's frame on screen, for the HUD. Nil while macOS keeps the icon
+    /// out of a full menu bar: its window is then parked, unseen, below the
+    /// screen's bottom corner. A menu bar that hides itself only lifts the
+    /// icon above the screen's top edge, which still says where the HUD belongs.
     var screenFrame: NSRect? {
         guard let button = item.button, let window = button.window else { return nil }
-        return window.convertToScreen(button.convert(button.bounds, to: nil))
+        let rect = window.convertToScreen(button.convert(button.bounds, to: nil))
+        if window.occlusionState.contains(.visible) { return rect }
+        let lifted = NSScreen.screens.contains {
+            ($0.frame.minX...$0.frame.maxX).contains(rect.midX) && rect.minY >= $0.frame.maxY - 1
+        }
+        return lifted ? rect : nil
+    }
+
+    /// Opens the menu as a click would, for `-show menu`.
+    func openMenu() {
+        item.button?.performClick(nil)
     }
 
     /// The ring stays up until the batch reports how it went.
@@ -169,7 +182,8 @@ final class StatusItemController: NSObject, NSMenuDelegate, NSWindowDelegate, NS
 
         let uploader = Uploader.shared
         if uploader.isBusy {
-            let count = uploader.activeCount
+            // The last file may be done a moment before its batch is.
+            let count = max(1, uploader.activeCount)
             let row = item(
                 "Uploading \(count) file\(count == 1 ? "" : "s")… \(Int(uploader.progress * 100))%", "arrow.up.circle", nil,
                 target: nil)
@@ -207,15 +221,17 @@ final class StatusItemController: NSObject, NSMenuDelegate, NSWindowDelegate, NS
         if !recent.isEmpty {
             menu.addItem(.separator())
             menu.addItem(.sectionHeader(title: "Recent"))
+            let format = Settings.linkFormat.displayName
             for entry in recent {
-                let row = NSMenuItem(title: entry.name, action: #selector(copyRecent(_:)), keyEquivalent: "")
+                let title = Self.menuTitle(entry.name)
+                let row = NSMenuItem(title: title, action: #selector(copyRecent(_:)), keyEquivalent: "")
                 row.target = self
                 row.representedObject = entry.url
-                row.subtitle = entry.url
+                row.subtitle = Self.menuSubtitle(entry)
                 row.image = Self.menuThumbnail(entry)
-                row.toolTip = "Click to copy as \(Settings.linkFormat.displayName). Option-click to open."
+                row.toolTip = "\(entry.url)\nClick to copy as \(format). Option-click to open."
                 menu.addItem(row)
-                let open = NSMenuItem(title: entry.name, action: #selector(openRecent(_:)), keyEquivalent: "")
+                let open = NSMenuItem(title: title, action: #selector(openRecent(_:)), keyEquivalent: "")
                 open.target = self
                 open.representedObject = entry.url
                 open.subtitle = "Open in Browser"
@@ -270,6 +286,27 @@ final class StatusItemController: NSObject, NSMenuDelegate, NSWindowDelegate, NS
         row.keyEquivalentModifierMask = hotKey.modifiers
     }
 
+    /// A name short enough to keep the menu narrow, cut in the middle so the
+    /// extension stays.
+    static func menuTitle(_ name: String, limit: Int = 34) -> String {
+        guard name.count > limit else { return name }
+        let tail = (limit - 1) / 2
+        return name.prefix(limit - 1 - tail) + "…" + name.suffix(tail)
+    }
+
+    /// When and how big, on one line: "5 minutes ago · 48 KB".
+    static func menuSubtitle(_ entry: HistoryEntry, now: Date = Date()) -> String {
+        let age = now.timeIntervalSince(entry.date)
+        let when = age < 60 ? "Just now" : relativeFormatter.localizedString(for: entry.date, relativeTo: now)
+        return "\(when) · \(ByteCountFormatter.string(fromByteCount: Int64(entry.size), countStyle: .file))"
+    }
+
+    private static let relativeFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.dateTimeStyle = .named
+        return formatter
+    }()
+
     /// The last few menu thumbnails, so opening the menu again decodes nothing.
     private static let menuThumbnails: NSCache<NSUUID, NSImage> = {
         let cache = NSCache<NSUUID, NSImage>()
@@ -278,14 +315,16 @@ final class StatusItemController: NSObject, NSMenuDelegate, NSWindowDelegate, NS
     }()
 
     /// A rounded 28-point thumbnail, drawn the first time the menu shows it.
+    /// Files without one get their type's icon at the same size, so every
+    /// row's text starts at the same place.
     private static func menuThumbnail(_ entry: HistoryEntry) -> NSImage? {
         if let cached = menuThumbnails.object(forKey: entry.id as NSUUID) { return cached }
+        let side: CGFloat = 28
         guard let url = entry.thumbnailURL, let source = NSImage(contentsOf: url) else {
-            return NSImage(systemSymbolName: "doc", accessibilityDescription: nil)
+            return FileIcon.image(forName: entry.name, side: side)
         }
         // Drawn once into a small 2x bitmap, so the cache holds a few kilobytes
         // per entry rather than the source image and a drawing block.
-        let side: CGFloat = 28
         let pixels = Int(side * 2)
         guard let rep = NSBitmapImageRep(
             bitmapDataPlanes: nil, pixelsWide: pixels, pixelsHigh: pixels, bitsPerSample: 8, samplesPerPixel: 4,
@@ -295,11 +334,17 @@ final class StatusItemController: NSObject, NSMenuDelegate, NSWindowDelegate, NS
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
         let rect = NSRect(x: 0, y: 0, width: side, height: side)
-        NSBezierPath(roundedRect: rect, xRadius: 6, yRadius: 6).addClip()
+        let outline = NSBezierPath(roundedRect: rect, xRadius: 6, yRadius: 6)
+        outline.addClip()
         let size = source.size
         let scale = max(side / max(size.width, 1), side / max(size.height, 1))
         let drawn = NSSize(width: size.width * scale, height: size.height * scale)
         source.draw(in: NSRect(x: (side - drawn.width) / 2, y: (side - drawn.height) / 2, width: drawn.width, height: drawn.height))
+        // A hairline inside the edge, so a white screenshot keeps its shape
+        // on a light menu and a black one on a dark menu.
+        NSColor.gray.withAlphaComponent(0.35).setStroke()
+        outline.lineWidth = 1
+        outline.stroke()
         NSGraphicsContext.restoreGraphicsState()
         let image = NSImage(size: rep.size)
         image.addRepresentation(rep)

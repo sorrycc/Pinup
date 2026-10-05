@@ -14,6 +14,8 @@ final class HUD {
     private var panel: NSPanel?
     private var hideTask: Task<Void, Never>?
     private static let width: CGFloat = 320
+    /// How far the panel slides as it comes and goes. Nothing with Reduce Motion on.
+    private static var slide: CGFloat { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 8 }
 
     func showSuccess(_ entry: HistoryEntry, count: Int, format: LinkFormat) {
         let image = entry.thumbnailURL.flatMap { NSImage(contentsOf: $0) }
@@ -23,11 +25,12 @@ final class HUD {
             subtitle: entry.url, wraps: false, duration: .seconds(2.4))
     }
 
-    /// `hint` says what a click does, which `action` then runs.
+    /// `hint` says what a click does, which `action` then runs. It gets a
+    /// line of its own, so a long message never pushes it out of sight.
     func showFailure(_ message: String, hint: String? = nil, action: (() -> Void)? = nil) {
         show(
             image: nil, symbol: "exclamationmark.triangle.fill", tint: .systemOrange, title: "Upload failed",
-            subtitle: hint.map { message + " " + $0 } ?? message, wraps: true, duration: .seconds(6), action: action)
+            subtitle: message, hint: hint, wraps: true, duration: .seconds(6), action: action)
     }
 
     func showMessage(_ title: String, _ subtitle: String, symbol: String = "info.circle.fill") {
@@ -35,26 +38,28 @@ final class HUD {
     }
 
     private func show(
-        image: NSImage?, symbol: String, tint: NSColor, title: String, subtitle: String, wraps: Bool, duration: Duration,
-        action: (() -> Void)? = nil
+        image: NSImage?, symbol: String, tint: NSColor, title: String, subtitle: String, hint: String? = nil, wraps: Bool,
+        duration: Duration, action: (() -> Void)? = nil
     ) {
         hideTask?.cancel()
         let panel = self.panel ?? makePanel()
         self.panel = panel
-        let content = HUDContent(image: image, symbol: symbol, tint: tint, title: title, subtitle: subtitle, wraps: wraps)
+        let content = HUDContent(
+            image: image, symbol: symbol, tint: tint, title: title, subtitle: subtitle, hint: hint, wraps: wraps)
         content.onClick = { [weak self] in
             self?.hide()
             if let action { action() } else { self?.onClick?() }
         }
+        // Measured before it goes into the panel, whose frame would otherwise
+        // stand in for the height the text needs.
+        let height = max(64, content.fittingSize.height)
         let glass = NSGlassEffectView()
         glass.cornerRadius = 20
         glass.contentView = content
         panel.contentView = glass
 
-        let size = content.fittingSize
-        let height = max(64, size.height)
         let target = frame(height: height)
-        let start = target.offsetBy(dx: 0, dy: 8)
+        let start = target.offsetBy(dx: 0, dy: Self.slide)
         if !panel.isVisible {
             panel.setFrame(start, display: false)
             panel.alphaValue = 0
@@ -69,9 +74,23 @@ final class HUD {
         // VoiceOver users hear what sighted users see.
         NSAccessibility.post(
             element: NSApp as Any, notification: .announcementRequested,
-            userInfo: [.announcement: "\(title). \(subtitle)", .priority: NSAccessibilityPriorityLevel.high.rawValue])
+            userInfo: [
+                .announcement: [title, subtitle, hint].compactMap { $0 }.joined(separator: ". "),
+                .priority: NSAccessibilityPriorityLevel.high.rawValue,
+            ])
+        hide(after: duration)
+    }
+
+    /// Hides when the time is up, or once the pointer has left: the panel
+    /// stays for as long as the pointer rests on it, so a long message can
+    /// be read.
+    private func hide(after duration: Duration) {
+        hideTask?.cancel()
         hideTask = Task { [weak self] in
             try? await Task.sleep(for: duration)
+            while !Task.isCancelled, let panel = self?.panel, panel.frame.contains(NSEvent.mouseLocation) {
+                try? await Task.sleep(for: .milliseconds(400))
+            }
             guard !Task.isCancelled else { return }
             self?.hide()
         }
@@ -84,7 +103,7 @@ final class HUD {
             context.duration = 0.25
             context.timingFunction = CAMediaTimingFunction(name: .easeIn)
             panel.animator().alphaValue = 0
-            panel.animator().setFrame(panel.frame.offsetBy(dx: 0, dy: 6), display: true)
+            panel.animator().setFrame(panel.frame.offsetBy(dx: 0, dy: Self.slide), display: true)
         }, completionHandler: {
             MainActor.assumeIsolated {
                 if panel.alphaValue == 0 { panel.orderOut(nil) }
@@ -95,7 +114,11 @@ final class HUD {
     private func frame(height: CGFloat) -> NSRect {
         let width = Self.width
         let anchorRect = anchor?() ?? .zero
-        let screen = NSScreen.screens.first { $0.frame.intersects(anchorRect) } ?? NSScreen.main
+        // The screen whose menu bar holds the icon: the one it is over, with
+        // the nearest top edge, which also holds while that bar is hidden.
+        let screen = anchorRect == .zero ? NSScreen.main : NSScreen.screens
+            .filter { ($0.frame.minX...$0.frame.maxX).contains(anchorRect.midX) }
+            .min { abs($0.frame.maxY - anchorRect.maxY) < abs($1.frame.maxY - anchorRect.maxY) } ?? NSScreen.main
         let visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
         var x = anchorRect == .zero ? visible.maxX - width - 12 : anchorRect.midX - width / 2
         x = min(max(x, visible.minX + 8), visible.maxX - width - 8)
@@ -123,8 +146,9 @@ final class HUD {
 private final class HUDContent: NSView {
     var onClick: (() -> Void)?
 
-    /// A link stays on one line, cut in the middle; messages wrap to three lines.
-    init(image: NSImage?, symbol: String, tint: NSColor, title: String, subtitle: String, wraps: Bool) {
+    /// A link stays on one line, cut in the middle; messages wrap to three
+    /// lines, with the hint on its own line under them.
+    init(image: NSImage?, symbol: String, tint: NSColor, title: String, subtitle: String, hint: String?, wraps: Bool) {
         super.init(frame: .zero)
         let leading: NSView
         if let image {
@@ -154,7 +178,8 @@ private final class HUDContent: NSView {
             leading = box
         } else {
             let view = NSImageView(image: NSImage(systemSymbolName: symbol, accessibilityDescription: nil)!)
-            view.symbolConfiguration = .init(pointSize: 26, weight: .semibold).applying(.init(hierarchicalColor: tint))
+            // A filled shape in the tint with its mark in white, like the badge on a thumbnail.
+            view.symbolConfiguration = .init(pointSize: 26, weight: .semibold).applying(.init(paletteColors: [.white, tint]))
             view.widthAnchor.constraint(equalToConstant: 44).isActive = true
             leading = view
         }
@@ -169,6 +194,12 @@ private final class HUDContent: NSView {
         subtitleLabel.cell?.truncatesLastVisibleLine = true
         subtitleLabel.preferredMaxLayoutWidth = 320 - 44 - 16 * 2 - 12
         let text = NSStackView(views: [titleLabel, subtitleLabel])
+        if let hint {
+            let hintLabel = NSTextField(labelWithString: hint)
+            hintLabel.font = .systemFont(ofSize: 11, weight: .medium)
+            hintLabel.textColor = .labelColor
+            text.addArrangedSubview(hintLabel)
+        }
         text.orientation = .vertical
         text.alignment = .leading
         text.spacing = 2
@@ -185,6 +216,10 @@ private final class HUDContent: NSView {
             row.trailingAnchor.constraint(equalTo: trailingAnchor),
             row.topAnchor.constraint(equalTo: topAnchor),
             row.bottomAnchor.constraint(equalTo: bottomAnchor),
+            // The row centres its text and would let tall text reach the
+            // panel's edges, so the margin above and below is spelled out.
+            text.topAnchor.constraint(greaterThanOrEqualTo: topAnchor, constant: 12),
+            text.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -12),
             widthAnchor.constraint(equalToConstant: 320),
         ])
     }

@@ -310,10 +310,7 @@ final class HotKeyRecorder: NSButton {
         clearButton.isHidden = !showsClear
         setAccessibilityValue(hotKey?.displayString ?? "None")
         effectiveAppearance.performAsCurrentDrawingAppearance {
-            let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-            layer?.backgroundColor = dark
-                ? NSColor.white.withAlphaComponent(0.06).cgColor
-                : NSColor.textBackgroundColor.cgColor
+            layer?.backgroundColor = NSColor.fieldFill(for: effectiveAppearance).cgColor
             let focused = isRecording || hasFocus
             layer?.borderWidth = focused ? 2 : 1
             layer?.borderColor = focused ? NSColor.controlAccentColor.cgColor : NSColor.separatorColor.cgColor

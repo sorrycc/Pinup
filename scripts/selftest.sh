@@ -8,4 +8,5 @@ SOURCES=$(find "$ROOT/Sources/Pinup" -name '*.swift' ! -name main.swift)
 # shellcheck disable=SC2086
 swiftc -swift-version 6 -parse-as-library -target arm64-apple-macos26.0 -framework Carbon \
     $SOURCES "$ROOT/Tests/SelfTest.swift" -o "$OUT"
-"$OUT"
+# A folder of its own, so the tests never read or write your real history.
+PINUP_HOME="$(mktemp -d)" "$OUT"

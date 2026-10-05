@@ -67,7 +67,7 @@ struct CustomHost: UploadHost {
             // The other keys as JSON, then the file's key and its base64 streamed in last.
             var prefix = try JSONSerialization.data(withJSONObject: object, options: .sortedKeys)
             prefix.removeLast()  // the closing brace
-            prefix.append(Data(",".utf8))
+            if !object.isEmpty { prefix.append(Data(",".utf8)) }
             prefix.append(try BodyWriter.json(field))
             prefix.append(Data(#":""#.utf8))
             let bodyURL = scratch.appendingPathComponent("body.json")

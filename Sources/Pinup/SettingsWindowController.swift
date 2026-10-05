@@ -63,14 +63,36 @@ class SettingsPane: NSViewController {
         stack.alignment = .leading
         stack.spacing = 18
         stack.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(stack)
+        // The cards scroll when the screen is too short to show them all,
+        // which a small display is for S3 and Custom HTTP.
+        let document = FlippedView()
+        document.translatesAutoresizingMaskIntoConstraints = false
+        document.addSubview(stack)
+        let scroll = NSScrollView()
+        scroll.documentView = document
+        scroll.drawsBackground = false
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        // Cards that all fit stay put under a swipe.
+        scroll.verticalScrollElasticity = .none
+        // Over the content, so a scroller never narrows the cards.
+        scroll.scrollerStyle = .overlay
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(scroll)
         NSLayoutConstraint.activate([
             view.widthAnchor.constraint(equalToConstant: Self.width),
-            stack.topAnchor.constraint(equalTo: view.topAnchor, constant: Self.margin),
-            // Not pinned to the bottom: the window is sized to the stack, never
-            // the other way round, so cards keep their height while it animates.
-            stack.bottomAnchor.constraint(lessThanOrEqualTo: view.bottomAnchor, constant: -Self.margin),
-            stack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: Self.margin),
+            scroll.topAnchor.constraint(equalTo: view.topAnchor),
+            scroll.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            scroll.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            document.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
+            document.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
+            document.widthAnchor.constraint(equalToConstant: Self.width),
+            // The document is as tall as its cards, never the window, so
+            // cards keep their height while the window animates.
+            stack.topAnchor.constraint(equalTo: document.topAnchor, constant: Self.margin),
+            stack.bottomAnchor.constraint(equalTo: document.bottomAnchor, constant: -Self.margin),
+            stack.leadingAnchor.constraint(equalTo: document.leadingAnchor, constant: Self.margin),
             stack.widthAnchor.constraint(equalToConstant: Self.cardWidth),
         ])
         self.view = view
@@ -78,10 +100,42 @@ class SettingsPane: NSViewController {
         preferredContentSize = fittingSize
     }
 
-    /// The size that shows every visible card with the margins around them.
+    /// The screen may have changed since the pane was last shown.
+    override func viewWillAppear() {
+        super.viewWillAppear()
+        preferredContentSize = fittingSize
+    }
+
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        keepOnScreen()
+    }
+
+    /// The size that shows every visible card with the margins around them,
+    /// or as much of that as the screen has room for.
     var fittingSize: NSSize {
         view.layoutSubtreeIfNeeded()
-        return NSSize(width: Self.width, height: stack.fittingSize.height + Self.margin * 2)
+        let wanted = stack.fittingSize.height + Self.margin * 2
+        return NSSize(width: Self.width, height: min(wanted, maximumHeight))
+    }
+
+    /// The tallest the pane can be with its whole window on screen.
+    private var maximumHeight: CGFloat {
+        let window = view.window
+        guard let screen = window?.screen ?? NSScreen.main else { return .greatestFiniteMagnitude }
+        // What the window adds above the pane: its title bar and toolbar.
+        let chrome = window.map { $0.frame.height - $0.contentLayoutRect.height } ?? 90
+        return max(240, screen.visibleFrame.height - chrome)
+    }
+
+    /// Slides the window up when its bottom edge has gone under the Dock or
+    /// off the screen, as it can after growing downwards.
+    private func keepOnScreen() {
+        guard let window = view.window, window.isVisible, let visible = window.screen?.visibleFrame else { return }
+        var frame = window.frame
+        guard frame.minY < visible.minY else { return }
+        frame.origin.y = visible.minY
+        window.setFrame(frame, display: true, animate: true)
     }
 
     func buildSections() {}
@@ -121,6 +175,7 @@ class SettingsPane: NSViewController {
         var frame = window.frame
         frame.size.height += delta
         frame.origin.y -= delta
+        if let visible = window.screen?.visibleFrame { frame.origin.y = max(frame.origin.y, visible.minY) }
         window.setFrame(frame, display: true, animate: true)
     }
 
@@ -133,7 +188,7 @@ class SettingsPane: NSViewController {
         let label = NSTextField(wrappingLabelWithString: text)
         label.font = .systemFont(ofSize: 11)
         label.textColor = .secondaryLabelColor
-        label.preferredMaxLayoutWidth = cardWidth - 28
+        label.preferredMaxLayoutWidth = cardWidth - 32
         return label
     }
 
@@ -154,17 +209,18 @@ class SettingsPane: NSViewController {
         text.isVerticallyResizable = true
         text.textContainer?.widthTracksTextView = true
         text.string = value
-        text.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        text.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
         text.isAutomaticQuoteSubstitutionEnabled = false
         text.isAutomaticDashSubstitutionEnabled = false
         text.isAutomaticTextReplacementEnabled = false
         text.isAutomaticSpellingCorrectionEnabled = false
         text.isRichText = false
         text.drawsBackground = false
-        text.textContainerInset = NSSize(width: 4, height: 6)
+        // With the container's own padding, text starts where a text field's does.
+        text.textContainerInset = NSSize(width: 1, height: 6)
         text.setValue(
             NSAttributedString(string: placeholder, attributes: [
-                .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular),
+                .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular),
                 .foregroundColor: NSColor.placeholderTextColor,
             ]), forKey: "placeholderAttributedString")
         scroll.documentView = text
@@ -182,7 +238,7 @@ class SettingsPane: NSViewController {
             scroll.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 1),
             scroll.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -1),
             box.widthAnchor.constraint(equalToConstant: fieldWidth),
-            box.heightAnchor.constraint(equalToConstant: CGFloat(lines) * 15 + 14),
+            box.heightAnchor.constraint(equalToConstant: CGFloat(lines) * 16 + 14),
         ])
         return (box, text)
     }
@@ -210,6 +266,22 @@ class SettingsPane: NSViewController {
     }
 }
 
+extension NSColor {
+    /// The fill the system's text fields have on a card: white in light,
+    /// and a well a shade darker than the card in dark. For the custom
+    /// controls that sit beside them.
+    static func fieldFill(for appearance: NSAppearance) -> NSColor {
+        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            ? NSColor.black.withAlphaComponent(0.24)
+            : .textBackgroundColor
+    }
+}
+
+/// Lays out from the top, as a scrolling column of cards should.
+final class FlippedView: NSView {
+    override var isFlipped: Bool { true }
+}
+
 /// The note under a card, inset a little from its edges.
 @MainActor
 final class FormFooter: NSView {
@@ -222,8 +294,9 @@ final class FormFooter: NSView {
         addSubview(label)
         NSLayoutConstraint.activate([
             widthAnchor.constraint(equalToConstant: SettingsPane.cardWidth),
-            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
-            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
+            // In line with the rows' text above.
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
             label.topAnchor.constraint(equalTo: topAnchor),
             label.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
@@ -263,7 +336,7 @@ final class FormSection: NSView {
                 column.addArrangedSubview(line)
                 NSLayoutConstraint.activate([
                     line.leadingAnchor.constraint(equalTo: column.leadingAnchor, constant: 16),
-                    line.trailingAnchor.constraint(equalTo: column.trailingAnchor),
+                    line.trailingAnchor.constraint(equalTo: column.trailingAnchor, constant: -16),
                 ])
             }
             column.addArrangedSubview(row)
@@ -509,6 +582,7 @@ final class GeneralSettingsPane: SettingsPane {
         let enabled = Settings.conversion != .original
         quality.isEnabled = enabled
         qualityRow?.titleLabel.textColor = enabled ? .labelColor : .tertiaryLabelColor
+        qualityRow?.detailLabel.textColor = enabled ? .secondaryLabelColor : .tertiaryLabelColor
         qualityLabel.textColor = enabled ? .secondaryLabelColor : .tertiaryLabelColor
     }
 
@@ -643,10 +717,10 @@ final class HostsSettingsPane: SettingsPane, NSTextFieldDelegate, NSTextViewDele
                 footer: Self.secretsNote),
             addSection(
                 [
-                    FormRow("File path", detail: "{year} {month} {day} {timestamp} {random} {name} {ext}", control: s3Key),
+                    FormRow("File path", control: s3Key),
                     FormRow("Public URL", control: s3Public),
                 ],
-                footer: "The public URL is your CDN or public bucket domain. Use {key} to place the path, or leave it empty for the object's own URL."),
+                footer: "The file path can use {year}, {month}, {day}, {timestamp}, {random}, {name} and {ext}. The public URL is your CDN or public bucket domain: use {key} to place the path, or leave it empty for the object's own URL."),
         ]
     }
 
@@ -672,13 +746,13 @@ final class HostsSettingsPane: SettingsPane, NSTextFieldDelegate, NSTextViewDele
         return [
             addSection(
                 [
-                    FormRow("URL", detail: "{name} is replaced by the file's name.", control: customURL),
+                    FormRow("URL", detail: "{name} becomes the file's name.", control: customURL),
                     FormRow("Request", control: request),
                 ],
                 footer: "Multipart sends a form; JSON sends the file in base64; Raw File sends it as the body."),
             addSection(
                 [
-                    FormRow("File field", detail: "The form field or JSON key for the file.", control: customField),
+                    FormRow("File field", detail: "The form field or JSON key.", control: customField),
                     FormRow("Extra fields", detail: "One key=value per line.", control: fieldsBox, top: true),
                     FormRow("Headers", detail: "One Name: value per line.", control: headersBox, top: true),
                 ],
@@ -874,8 +948,6 @@ final class TextAreaBox: NSView {
         layer?.cornerCurve = .continuous
         layer?.borderWidth = 1
         layer?.borderColor = NSColor.separatorColor.cgColor
-        // Light fields are white; dark ones are nearly see-through.
-        let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-        layer?.backgroundColor = dark ? NSColor.white.withAlphaComponent(0.04).cgColor : NSColor.textBackgroundColor.cgColor
+        layer?.backgroundColor = NSColor.fieldFill(for: effectiveAppearance).cgColor
     }
 }

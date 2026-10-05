@@ -65,6 +65,11 @@ struct SelfTest {
         let nameFieldBody = String(decoding: try Data(contentsOf: nameFieldRequest.body), as: UTF8.self)
         check(nameFieldBody.components(separatedBy: "\"fileName\"").count == 2, "no duplicate fileName key", nameFieldBody)
 
+        custom.fields = ""
+        let bareRequest = try CustomHost(config: custom, headers: "").request(for: customPrepared, scratch: scratch)
+        let bareBody = try? JSONSerialization.jsonObject(with: Data(contentsOf: bareRequest.body)) as? [String: String]
+        check(bareBody == ["fileName": Data("hello".utf8).base64EncodedString()], "JSON body with only the file", "\(String(describing: bareBody))")
+
         // Hot keys match by physical key, whatever the layout called it
         check(HotKey(keyCode: 1, modifiers: [.command, .option], key: "S") == HotKey(keyCode: 1, modifiers: [.command, .option], key: "Ы"), "hot key equality by key code")
 
@@ -127,10 +132,53 @@ struct SelfTest {
             check(link.hasPrefix("https://img.example.com/2026/10/hello"), "s3 public link", link)
         }
 
+        // Menu rows: names cut in the middle, and one line of when and how big
+        let longName = "Screenshot 2026-10-04 at 09.12.44 (annotated copy).png"
+        let shortened = StatusItemController.menuTitle(longName)
+        check(shortened.count == 34 && shortened.hasPrefix("Screenshot") && shortened.hasSuffix(".png") && shortened.contains("…"),
+              "menu title cut in the middle", shortened)
+        check(StatusItemController.menuTitle("a.png") == "a.png", "short menu title kept")
+        let now = Date(timeIntervalSince1970: 1_790_000_000)
+        func entry(age: TimeInterval) -> HistoryEntry {
+            HistoryEntry(
+                id: UUID(), url: "https://x/a.png", name: "a.png", host: "x", size: 48_000, width: 1, height: 1,
+                date: now.addingTimeInterval(-age), thumbnail: nil)
+        }
+        check(StatusItemController.menuSubtitle(entry(age: 5), now: now).hasPrefix("Just now · "), "menu subtitle just now")
+        let hourAgo = StatusItemController.menuSubtitle(entry(age: 3600), now: now)
+        check(hourAgo.contains(" · ") && !hourAgo.hasPrefix("Just now") && !hourAgo.contains("\n"), "menu subtitle one line", hourAgo)
+
+        // Progress: weighed by size, and a finished file keeps its share
+        check(Uploader.combinedProgress([]) == 0, "progress of nothing")
+        check(Uploader.combinedProgress([(weight: 100, fraction: 1), (weight: 300, fraction: 0)]) == 0.25, "progress weighed by size")
+        check(Uploader.combinedProgress([(weight: 1, fraction: 1), (weight: 1, fraction: 0.5)]) == 0.75, "finished file keeps its share")
+
+        // History: a file that won't decode is set aside, never overwritten
+        try Data("not json".utf8).write(to: AppPaths.history)
+        check(History.shared.entries.isEmpty, "unreadable history starts empty")
+        let aside = try FileManager.default.contentsOfDirectory(atPath: AppPaths.root.path).filter { $0.hasPrefix("history-unreadable-") }
+        check(aside.count == 1 && !FileManager.default.fileExists(atPath: AppPaths.history.path), "unreadable history set aside", "\(aside)")
+
+        // History: quitting saves at once and deletes removed uploads' thumbnails
+        let thumbnailName = "\(UUID().uuidString).jpg"
+        let thumbnailFile = AppPaths.thumbnails.appendingPathComponent(thumbnailName)
+        try Data("thumb".utf8).write(to: thumbnailFile)
+        let staying = HistoryEntry(id: UUID(), url: "https://x/kept.png", name: "kept.png", host: "x", size: 1, width: 1, height: 1, date: now, thumbnail: nil)
+        let gone = HistoryEntry(id: UUID(), url: "https://x/gone.png", name: "gone.png", host: "x", size: 1, width: 1, height: 1, date: now, thumbnail: thumbnailName)
+        History.shared.add([staying, gone])
+        History.shared.remove([gone.id])
+        History.shared.flush()
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let saved = try? decoder.decode([HistoryEntry].self, from: Data(contentsOf: AppPaths.history))
+        check(saved?.map(\.id) == [staying.id], "flush saves history at once", "\(String(describing: saved?.map(\.name)))")
+        check(!FileManager.default.fileExists(atPath: thumbnailFile.path), "flush deletes removed thumbnails")
+
         // Every pane and window loads without throwing.
         _ = NSApplication.shared
         for pane in [GeneralSettingsPane(), HostsSettingsPane(), ShortcutsSettingsPane()] as [SettingsPane] {
-            let size = pane.view.fittingSize
+            _ = pane.view
+            let size = pane.preferredContentSize
             check(size.width > 300 && size.height > 100, "\(pane.title ?? "") pane loads", "\(size)")
         }
         let history = HistoryWindowController()

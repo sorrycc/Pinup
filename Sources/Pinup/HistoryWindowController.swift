@@ -27,7 +27,6 @@ final class HistoryWindowController: NSWindowController, NSWindowDelegate, NSToo
         window.title = "History"
         window.minSize = NSSize(width: 440, height: 360)
         window.isReleasedWhenClosed = false
-        window.setFrameAutosaveName("History")
         window.toolbarStyle = .unified
         window.tabbingMode = .disallowed
         super.init(window: window)
@@ -41,7 +40,9 @@ final class HistoryWindowController: NSWindowController, NSWindowDelegate, NSToo
         buildContent()
         reload()
         NotificationCenter.default.addObserver(self, selector: #selector(historyChanged), name: .historyDidChange, object: nil)
-        if window.frame.origin == .zero { window.center() }
+        // Where it was last left, or the middle of the screen the first time.
+        if !window.setFrameUsingName("History") { window.center() }
+        window.setFrameAutosaveName("History")
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -101,6 +102,8 @@ final class HistoryWindowController: NSWindowController, NSWindowDelegate, NSToo
         scroll.autohidesScrollers = true
         scroll.drawsBackground = false
 
+        emptyState.onUpload = { [weak self] in self?.uploadFiles(nil) }
+
         let container = DropView()
         container.onDrop = { Uploader.shared.upload($0) }
         for view in [scroll, emptyState] {
@@ -128,9 +131,10 @@ final class HistoryWindowController: NSWindowController, NSWindowDelegate, NSToo
 
     private func reload(animated: Bool = false) {
         let all = History.shared.entries
-        let needle = query.lowercased()
+        // Whatever the case or accents, as Finder's search matches.
+        let needle = query
         let shown = needle.isEmpty ? all : all.filter {
-            $0.name.lowercased().contains(needle) || $0.url.lowercased().contains(needle)
+            $0.name.localizedStandardContains(needle) || $0.url.localizedStandardContains(needle)
         }
         byID = Dictionary(shown.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         let calendar = Calendar.current
@@ -403,6 +407,7 @@ private final class HistoryItem: NSCollectionViewItem {
     private let flashView = NSGlassEffectView()
     private let flashLabel = NSTextField(labelWithString: "")
     private var entryID: UUID?
+    private var loadTask: Task<Void, Never>?
 
     override func loadView() {
         let root = ItemRootView()
@@ -410,6 +415,15 @@ private final class HistoryItem: NSCollectionViewItem {
         root.onClick = { [weak self] count in
             guard let self else { return }
             if count == 2 { self.onOpen?() } else { self.onCopy?() }
+        }
+        // VoiceOver's press selects the tile as a click does, then copies.
+        root.onPress = { [weak self] in
+            guard let self else { return }
+            if let collectionView = self.collectionView, let indexPath = collectionView.indexPath(for: self) {
+                collectionView.deselectAll(nil)
+                collectionView.selectItems(at: [indexPath], scrollPosition: [])
+            }
+            self.onCopy?()
         }
 
         nameLabel.font = .systemFont(ofSize: 12, weight: .medium)
@@ -476,15 +490,26 @@ private final class HistoryItem: NSCollectionViewItem {
         if entry.width > 0 { meta.append("\(entry.width)×\(entry.height)") }
         meta.append(entry.date.formatted(date: .omitted, time: .shortened))
         metaLabel.stringValue = meta.joined(separator: " · ")
+        view.setAccessibilityLabel("\(entry.name), \(meta.joined(separator: ", "))")
         let sameEntry = entryID == entry.id && tile.image != nil
         entryID = entry.id
-        tile.placeholder = (entry.name as NSString).pathExtension.uppercased()
         if sameEntry { return }
-        tile.image = nil
+        loadTask?.cancel()
+        // Files that aren't images show their type's icon.
+        tile.placeholderName = entry.thumbnail == nil ? entry.name : nil
+        if let cached = ThumbnailCache.shared.cached(entry) {
+            tile.setImage(cached, animated: false)
+            return
+        }
+        tile.setImage(nil, animated: false)
+        guard entry.thumbnail != nil else { return }
         let id = entry.id
-        ThumbnailCache.shared.image(for: entry) { [weak self] image in
-            guard let self, self.entryID == id else { return }
-            self.tile.image = image
+        loadTask = Task { [weak self] in
+            let image = await ThumbnailCache.shared.load(entry)
+            guard let self, !Task.isCancelled, self.entryID == id else { return }
+            // Fades in, since it arrives after the tile is on screen.
+            self.tile.setImage(image, animated: true)
+            if image == nil { self.tile.placeholderName = entry.name }
         }
     }
 
@@ -494,6 +519,8 @@ private final class HistoryItem: NSCollectionViewItem {
 
     override func prepareForReuse() {
         super.prepareForReuse()
+        // Scrolled away before its thumbnail was decoded: don't decode it.
+        loadTask?.cancel()
         actions.alphaValue = 0
         flashView.alphaValue = 0
         tile.isHovered = false
@@ -527,6 +554,7 @@ private final class HistoryItem: NSCollectionViewItem {
 private final class ItemRootView: NSView {
     var onHover: ((Bool) -> Void)?
     var onClick: ((Int) -> Void)?
+    var onPress: (() -> Void)?
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -536,6 +564,16 @@ private final class ItemRootView: NSView {
 
     override func mouseEntered(with event: NSEvent) { onHover?(true) }
     override func mouseExited(with event: NSEvent) { onHover?(false) }
+
+    // VoiceOver reads a tile as one button, and pressing it copies the link.
+    override func isAccessibilityElement() -> Bool { true }
+    override func accessibilityRole() -> NSAccessibility.Role? { .button }
+    override func accessibilityHelp() -> String? { "Copies the link. Press Return to open it." }
+
+    override func accessibilityPerformPress() -> Bool {
+        onPress?()
+        return true
+    }
 
     override func mouseDown(with event: NSEvent) {
         let start = NSEvent.mouseLocation
@@ -550,24 +588,24 @@ private final class ItemRootView: NSView {
 }
 
 /// The thumbnail: drawn by its layer with aspect fill, on a soft fill, with
-/// a ring when selected.
+/// a ring when selected. A file with no thumbnail shows its type's icon.
 @MainActor
 private final class TileView: NSView {
-    var image: CGImage? {
+    private(set) var image: CGImage?
+    /// The file to stand in for, by its type's icon, while there is no
+    /// image. Nil shows the bare fill, as a loading tile does.
+    var placeholderName: String? {
         didSet {
-            CATransaction.begin()
-            CATransaction.setDisableActions(image == nil)
-            imageLayer.contents = image
-            CATransaction.commit()
-            placeholderLabel.isHidden = image != nil
+            guard placeholderName != oldValue else { return }
+            if let placeholderName { placeholderIcon.image = FileIcon.image(forName: placeholderName, side: 64) }
+            updatePlaceholder()
         }
     }
-    var placeholder = "" { didSet { placeholderLabel.stringValue = placeholder } }
     var isSelected = false { didSet { updateBorder() } }
     var isHovered = false { didSet { updateBorder() } }
 
     private let imageLayer = CALayer()
-    private let placeholderLabel = NSTextField(labelWithString: "")
+    private let placeholderIcon = NSImageView()
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -578,12 +616,30 @@ private final class TileView: NSView {
         imageLayer.contentsGravity = .resizeAspectFill
         imageLayer.actions = ["contents": CATransition()]
         layer?.addSublayer(imageLayer)
-        placeholderLabel.font = .systemFont(ofSize: 15, weight: .bold)
-        placeholderLabel.textColor = .tertiaryLabelColor
-        placeholderLabel.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(placeholderLabel)
-        placeholderLabel.centerXAnchor.constraint(equalTo: centerXAnchor).isActive = true
-        placeholderLabel.centerYAnchor.constraint(equalTo: centerYAnchor).isActive = true
+        placeholderIcon.imageScaling = .scaleProportionallyUpOrDown
+        placeholderIcon.isHidden = true
+        placeholderIcon.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(placeholderIcon)
+        NSLayoutConstraint.activate([
+            placeholderIcon.widthAnchor.constraint(equalToConstant: 64),
+            placeholderIcon.heightAnchor.constraint(equalToConstant: 64),
+            placeholderIcon.centerXAnchor.constraint(equalTo: centerXAnchor),
+            placeholderIcon.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+    }
+
+    /// `animated` fades the image in, for one that arrives after the tile shows.
+    func setImage(_ image: CGImage?, animated: Bool) {
+        self.image = image
+        CATransaction.begin()
+        CATransaction.setDisableActions(!animated)
+        imageLayer.contents = image
+        CATransaction.commit()
+        updatePlaceholder()
+    }
+
+    private func updatePlaceholder() {
+        placeholderIcon.isHidden = image != nil || placeholderName == nil
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -609,8 +665,10 @@ private final class TileView: NSView {
                 layer?.borderWidth = 3
                 layer?.borderColor = NSColor.controlAccentColor.cgColor
             } else {
+                // A hairline, so a white screenshot keeps its edge on a white
+                // window; a little stronger under the pointer.
                 layer?.borderWidth = 1
-                layer?.borderColor = NSColor.separatorColor.withAlphaComponent(isHovered ? 0.9 : 0.4).cgColor
+                layer?.borderColor = (isHovered ? NSColor.tertiaryLabelColor : NSColor.separatorColor).cgColor
             }
         }
     }
@@ -659,9 +717,12 @@ private final class SectionHeader: NSView, NSCollectionViewElement {
 
 @MainActor
 private final class EmptyStateView: NSStackView {
+    var onUpload: (() -> Void)?
+
     private let symbol = NSImageView()
     private let title = NSTextField(labelWithString: "")
     private let detail = NSTextField(wrappingLabelWithString: "")
+    private let upload = NSButton(title: "Upload Files…", target: nil, action: nil)
 
     init() {
         super.init(frame: .zero)
@@ -674,10 +735,15 @@ private final class EmptyStateView: NSStackView {
         detail.textColor = .secondaryLabelColor
         detail.alignment = .center
         detail.preferredMaxLayoutWidth = 340
+        upload.controlSize = .large
+        upload.target = self
+        upload.action = #selector(uploadClicked)
         addArrangedSubview(symbol)
         setCustomSpacing(14, after: symbol)
         addArrangedSubview(title)
         addArrangedSubview(detail)
+        setCustomSpacing(18, after: detail)
+        addArrangedSubview(upload)
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -685,15 +751,19 @@ private final class EmptyStateView: NSStackView {
     func show(searching: Bool, hasHistory: Bool) {
         if searching, hasHistory {
             symbol.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: nil)
-            title.stringValue = "No Matches"
+            title.stringValue = "No Results"
             detail.stringValue = "No upload's name or link has that text."
+            upload.isHidden = true
         } else {
             symbol.image = NSImage(systemSymbolName: "photo.stack", accessibilityDescription: nil)
             title.stringValue = "No Uploads Yet"
-            let clipboard = Settings.clipboardHotKey.map { " or press \($0.displayString) to upload the clipboard" } ?? ""
+            let clipboard = Settings.clipboardHotKey.map { ", or press \($0.displayString) to upload what's on the clipboard" } ?? ""
             detail.stringValue = "Drop images here or on the menu bar pin\(clipboard)."
+            upload.isHidden = false
         }
     }
+
+    @objc private func uploadClicked() { onUpload?() }
 }
 
 /// The window's content: takes file drops and shows a glowing outline while
@@ -777,22 +847,27 @@ final class ThumbnailCache {
         cache.removeAllObjects()
     }
 
-    func image(for entry: HistoryEntry, completion: @escaping (CGImage?) -> Void) {
-        if let box = cache.object(forKey: entry.id as NSUUID) {
-            completion(box.image)
-            return
-        }
-        guard let url = entry.thumbnailURL else { return completion(nil) }
-        let id = entry.id
+    /// The decoded thumbnail, when it is already in memory.
+    func cached(_ entry: HistoryEntry) -> CGImage? {
+        cache.object(forKey: entry.id as NSUUID)?.image
+    }
+
+    /// Decodes the thumbnail off the main thread. Nil when there is none,
+    /// or when the task was cancelled before the decode began.
+    func load(_ entry: HistoryEntry) async -> CGImage? {
+        guard let url = entry.thumbnailURL else { return nil }
         let generation = self.generation
-        Task {
-            let image = await Task.detached(priority: .userInitiated) { ImageProcessing.decodeThumbnail(at: url) }.value
-            guard generation == self.generation else { return }
-            if let image {
-                cache.setObject(CGImageBox(image), forKey: id as NSUUID, cost: image.bytesPerRow * image.height)
-            }
-            completion(image)
+        guard let image = await Self.decode(url) else { return nil }
+        if generation == self.generation {
+            cache.setObject(CGImageBox(image), forKey: entry.id as NSUUID, cost: image.bytesPerRow * image.height)
         }
+        return image
+    }
+
+    @concurrent
+    private nonisolated static func decode(_ url: URL) async -> CGImage? {
+        guard !Task.isCancelled else { return nil }
+        return ImageProcessing.decodeThumbnail(at: url)
     }
 }
 

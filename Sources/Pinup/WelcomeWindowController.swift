@@ -48,7 +48,7 @@ final class WelcomeWindowController: NSWindowController, NSWindowDelegate {
         let shortcuts: String
         switch (Settings.clipboardHotKey, Settings.screenshotHotKey) {
         case let (clipboard?, screenshot?):
-            shortcuts = "\(clipboard.displayString) uploads the clipboard. \(screenshot.displayString) captures part of the screen."
+            shortcuts = "\(clipboard.displayString) uploads the clipboard, \(screenshot.displayString) a screenshot."
         case let (clipboard?, nil):
             shortcuts = "\(clipboard.displayString) uploads the clipboard. Add a screenshot shortcut in Settings."
         case let (nil, screenshot?):
@@ -58,11 +58,11 @@ final class WelcomeWindowController: NSWindowController, NSWindowDelegate {
         }
         let features = NSStackView(views: [
             feature("pin.fill", .systemPink, "Lives in the menu bar",
-                    "Drop files on the pin. Click it for recent uploads and history."),
+                    "Drop files on the pin, or click it for recent uploads."),
             feature("keyboard.fill", .systemOrange, "Upload from any app",
                     shortcuts),
             feature("link", .systemPurple, "Links ready to paste",
-                    "Copied as Markdown, a plain URL or HTML, with a quick confirmation."),
+                    "Copied as Markdown, a plain URL or an HTML tag."),
         ])
         features.orientation = .vertical
         features.alignment = .leading
@@ -71,7 +71,7 @@ final class WelcomeWindowController: NSWindowController, NSWindowDelegate {
         let notch = NSTextField(wrappingLabelWithString:
             "Don't see the pin? A full menu bar hides icons behind the camera housing. Hold ⌘ and drag other icons away to make room.")
         notch.font = .systemFont(ofSize: 11)
-        notch.textColor = .tertiaryLabelColor
+        notch.textColor = .secondaryLabelColor
         notch.alignment = .center
         notch.preferredMaxLayoutWidth = 380
 
@@ -141,6 +141,8 @@ final class WelcomeWindowController: NSWindowController, NSWindowDelegate {
         text.orientation = .vertical
         text.alignment = .leading
         text.spacing = 2
+        // One width for all three, so they wrap alike and share a right edge.
+        text.widthAnchor.constraint(equalToConstant: 330).isActive = true
 
         let row = NSStackView(views: [badge, text])
         row.alignment = .centerY
