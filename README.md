@@ -2,75 +2,71 @@
   <img src="Resources/Pinup-1024.png" width="128" height="128" alt="Pinup icon">
 </p>
 
-# Pinup
+<h1 align="center">Pinup</h1>
 
-A small macOS menu bar app that uploads images and puts the link on your clipboard. Native Swift and AppKit with no dependencies, in a 600 KB binary.
+<p align="center">
+  A macOS menu bar app that uploads images and copies the link to your clipboard.
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/macOS-26%2B-black?logo=apple" alt="macOS 26+">
+  <img src="https://img.shields.io/badge/Swift-6.2-F05138?logo=swift&logoColor=white" alt="Swift 6.2">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"></a>
+</p>
+
+<p align="center">
+  <img src="docs/images/history.png" width="720" alt="The Pinup History window">
+</p>
+
+Pinup is written in Swift and AppKit with no third-party dependencies.
 
 ## Features
 
-- **Menu bar pin.** Drop files on it, or click it for recent uploads, history and settings. While files upload it shows their progress as a ring.
-- **Upload from anywhere.** ⌥⇧⌘U uploads the image or files on the clipboard. ⌥⇧⌘S captures part of the screen and uploads it. Both are changeable.
-- **Links ready to paste.** Copied as Markdown, a plain URL or an HTML `<img>` tag, with a glass confirmation under the pin. It stays while the pointer rests on it.
-- **Three kinds of host.** pic.sorrycc.com, any S3-compatible bucket (AWS S3, Cloudflare R2, Aliyun OSS, Tencent COS, MinIO), or any HTTP upload API you describe.
-- **Image handling.** Optional conversion to JPEG or HEIC at a chosen quality, and location data removed from photos before they leave the Mac.
-- **History.** Every upload with its thumbnail, grouped by day and searchable. Click a tile to copy its link, double-click to open it, drag it into another app. Removing one can be undone.
-- **Automation.** `pinup://` links run uploads from Shortcuts, Raycast or scripts.
+- Upload by dropping files on the menu bar icon, or with global shortcuts for the clipboard and for screenshots.
+- Copy links as Markdown, a plain URL or an HTML `<img>` tag.
+- Upload to pic.sorrycc.com, any S3-compatible bucket, or a custom HTTP API.
+- Convert images to JPEG or HEIC, and strip location data before upload.
+- Browse, search and re-copy past uploads in History.
+- Script uploads from Shortcuts, Raycast or the shell with `pinup://` URLs.
 
 ## Requirements
 
 - macOS 26 or later
 - Xcode Command Line Tools with Swift 6.2 or later
 
-## Build and run
+## Installation
 
 ```sh
-scripts/bundle.sh                         # release build; pass `debug` for a debug build
+scripts/bundle.sh          # release build; pass `debug` for a debug build
 open build/Pinup.app
-open build/Pinup.app --args -show hosts   # open Settings > Hosts at launch
 ```
 
-The script builds with SwiftPM, writes the Info.plist, and ad-hoc signs `build/Pinup.app`. Move it to /Applications to keep it.
+The script builds with SwiftPM and ad-hoc signs `build/Pinup.app`. Move the app to `/Applications` to keep it.
 
-On first launch Pinup shows a welcome window. Choose a host in Settings > Hosts and press Test Upload to check it.
+On first launch, choose a host in **Settings > Hosts** and press **Test Upload** to check it.
 
-## Uploading
+## Usage
 
-| How | What uploads |
+| Action | Uploads |
 |---|---|
-| Drop on the menu bar pin | The dropped files |
-| Drop on the History window | The dropped files |
-| ⌥⇧⌘U | Files copied in Finder, or else the image on the clipboard |
-| ⌥⇧⌘S | An area or window you pick, like ⇧⌘4 |
+| Drop on the menu bar icon or the History window | The dropped files |
+| ⌥⇧⌘U | Files copied in Finder, or the image on the clipboard |
+| ⌥⇧⌘S | A screen area or window you select |
 | Menu > Upload Files… (⌘O) | Files you choose |
-| `open -a Pinup file.png` | The file |
 
-Up to three files upload at once, in the order they were given. When a batch finishes, all its links go to the clipboard, one per line, and the pin shows a check. A failed upload is retried once after a dropped connection, a timeout or a server error.
+When a batch finishes, its links go to the clipboard, one per line. Open past uploads with **Menu > Show History** (⌘Y). Both shortcuts can be changed in Settings.
 
-When an upload still fails, the pin shows a warning and the confirmation explains why. Clicking it tries again, or opens Settings when the host needs fixing. Screenshots and pasted images that failed are kept, even across restarts, until the menu's Retry or Discard.
-
-Quitting while files upload asks whether to wait for them. Quitting at once keeps the links that already arrived, and any screenshot or pasted image still on its way is offered again at the next launch.
-
-Screenshots need the Screen Recording permission, which macOS asks for the first time.
-
-## History
-
-Menu > Show History (⌘Y) opens every past upload, newest first.
-
-| Action | Does |
-|---|---|
-| Click a tile | Copies its link in the current format |
-| Double-click, or Return | Opens the link in your browser |
-| Drag a tile out | Drops the link into another app |
-| ⌘C | Copies the selected links, one per line |
-| Delete | Removes the selection from History; ⌘Z puts it back |
-| ⌘F | Searches names and links, whatever the case or accents |
-| Right-click | Copy as any format, open, or remove |
-
-Removing an upload only removes it from the list. The file stays on its host.
+See [Usage](docs/usage.md) for retries, failed uploads, History actions and where Pinup stores its data.
 
 ## Hosts
 
-See [Hosts](docs/hosts.md) for every field, with setups for R2, AWS S3 and common upload APIs.
+Pinup supports three kinds of host:
+
+- **pic.sorrycc.com**, with a token
+- **S3-compatible storage**, such as AWS S3, Cloudflare R2, Aliyun OSS, Tencent COS and MinIO
+- **Custom HTTP API**, where you set the request and where to find the link in the response
+
+See [Hosts](docs/hosts.md) for every field, with example setups.
 
 ## Automation
 
@@ -83,39 +79,14 @@ open "pinup://history"
 open "pinup://settings/hosts"                    # or general, shortcuts
 ```
 
-## Data
-
-Everything lives in `~/Library/Application Support/Pinup`:
-
-| File | Holds |
-|---|---|
-| `history.json` | Up to 2,000 past uploads |
-| `Thumbnails/` | One small JPEG or PNG per upload |
-| `secrets.json` | Tokens, S3 secret key and custom headers, readable only by you |
-| `Failed/` | Screenshots and pasted images whose upload failed, until retried or discarded |
-
-Settings are in the `dev.sorrycc.pinup.app` user defaults. Secrets are kept in a file rather than the keychain. An ad-hoc signed app loses keychain access every time it is rebuilt, and macOS then asks for your login password.
-
 ## Development
 
 ```sh
-scripts/selftest.sh                # logic, S3 signing and window smoke tests, in a temporary folder
-swift scripts/make-icon.swift      # redraw Resources/Pinup.icns
-open build/Pinup.app --args -appearance light -show history
-PINUP_HOME=/tmp/pinup-test build/Pinup.app/Contents/MacOS/Pinup -show history
+scripts/selftest.sh        # run the tests in a temporary folder
+scripts/bundle.sh debug    # debug build
 ```
 
-`-show` takes `history`, `welcome`, `general`, `hosts` or `shortcuts`, and for checking the design `menu`, `hud` or `hud-failure`, which open the menu bar menu or a sample confirmation. `-appearance` takes `light` or `dark`. `PINUP_HOME` points the app at another folder for history, thumbnails and secrets. Settings still come from the app's user defaults, so for a fully separate copy build one with its own bundle identifier, which `scripts/bundle.sh` takes from `PINUP_BUNDLE_ID`, and its own output folder from `PINUP_OUT`.
-
-## Project layout
-
-| Path | Description |
-|---|---|
-| `Sources/Pinup/` | The app: menu bar item, uploader, History, Settings, HUD |
-| `Sources/Pinup/Hosts/` | pic.sorrycc.com, S3-compatible and custom HTTP hosts |
-| `Tests/SelfTest.swift` | Checks run by `scripts/selftest.sh` |
-| `scripts/bundle.sh` | Builds and assembles `build/Pinup.app` |
-| `scripts/make-icon.swift` | Draws the app icon |
+See [Development](docs/development.md) for launch flags, environment variables and the project layout.
 
 ## License
 
