@@ -24,7 +24,7 @@ Pinup is written in Swift and AppKit with no third-party dependencies.
 
 - Upload by dropping files on the menu bar icon, or with global shortcuts for the clipboard and for screenshots.
 - Copy links as Markdown, a plain URL or an HTML `<img>` tag.
-- Upload to pic.sorrycc.com, any S3-compatible bucket, or a custom HTTP API.
+- Upload to any S3-compatible bucket or HTTP upload API, and switch between as many hosts as you add.
 - Convert images to JPEG or HEIC, and strip location data before upload.
 - Browse, search and re-copy past uploads in History.
 - Script uploads from Shortcuts, Raycast or the shell with `pinup://` URLs.
@@ -43,7 +43,7 @@ open build/Pinup.app
 
 The script builds with SwiftPM and ad-hoc signs `build/Pinup.app`. Move the app to `/Applications` to keep it.
 
-On first launch, choose a host in **Settings > Hosts** and press **Test Upload** to check it.
+On first launch, add a host in **Settings > Hosts** and press **Test Upload** to check it.
 
 ## Usage
 
@@ -60,9 +60,8 @@ See [Usage](docs/usage.md) for retries, failed uploads, History actions and wher
 
 ## Hosts
 
-Pinup supports three kinds of host:
+A host is a named place uploads go. You add hosts in Settings, each from one of two providers, and pick one in **Settings > Hosts** or the menu's **Upload To**:
 
-- **pic.sorrycc.com**, with a token
 - **S3-compatible storage**, such as AWS S3, Cloudflare R2, Aliyun OSS, Tencent COS and MinIO
 - **Custom HTTP API**, where you set the request and where to find the link in the response
 

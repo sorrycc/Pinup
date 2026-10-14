@@ -75,7 +75,7 @@ final class WelcomeWindowController: NSWindowController, NSWindowDelegate {
         notch.alignment = .center
         notch.preferredMaxLayoutWidth = 380
 
-        let needsHost = Settings.host == .picSorrycc && Secrets.get(.picToken).isEmpty
+        let needsHost = Settings.hosts.isEmpty
         let primary = NSButton(title: needsHost ? "Set Up a Host…" : "Get Started", target: self, action: #selector(primaryClicked))
         primary.keyEquivalent = "\r"
         primary.controlSize = .large
@@ -153,8 +153,7 @@ final class WelcomeWindowController: NSWindowController, NSWindowDelegate {
     @objc private func primaryClicked() {
         Self.wasShown = true
         close()
-        let needsHost = Settings.host == .picSorrycc && Secrets.get(.picToken).isEmpty
-        if needsHost { onSetUpHost?() }
+        if Settings.hosts.isEmpty { onSetUpHost?() }
     }
 
     @objc private func laterClicked() {

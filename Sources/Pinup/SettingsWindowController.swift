@@ -618,16 +618,19 @@ final class GeneralSettingsPane: SettingsPane {
 final class HostsSettingsPane: SettingsPane, NSTextFieldDelegate, NSTextViewDelegate {
     static let paneTitle = "Hosts"
 
-    private var sections: [HostKind: [FormSection]] = [:]
-    private var hostPopUp: NSPopUpButton?
-    private var shownHost: HostKind?
+    private var sections: [Provider: [FormSection]] = [:]
+    private let hostPopUp = NSPopUpButton()
+    private var nameSection: FormSection?
+    private var emptyFooter: FormFooter?
+    private var testSection: FormSection?
+    /// The host the form shows, nil when there are none.
+    private var shownHost: HostConfig?
     private let testButton = NSButton(title: "Test Upload", target: nil, action: nil)
     private let testSpinner = NSProgressIndicator()
     private var testRow: FormRow?
     private static let testHint = "Uploads a small image to check the host."
 
-    // pic.sorrycc.com
-    private let picToken = SettingsPane.field("", placeholder: "Token", secure: true)
+    private let hostName = SettingsPane.field("", placeholder: "My Images")
     // S3
     private let s3Endpoint = SettingsPane.field("", placeholder: "https://<account>.r2.cloudflarestorage.com")
     private let s3Region = SettingsPane.field("", placeholder: "us-east-1, or auto for R2")
@@ -651,16 +654,17 @@ final class HostsSettingsPane: SettingsPane, NSTextFieldDelegate, NSTextViewDele
     required init?(coder: NSCoder) { fatalError() }
 
     override func buildSections() {
-        let host = Self.popUp(
-            HostKind.allCases, title: { $0.displayName }, selected: Settings.host, target: self,
-            action: #selector(hostChanged(_:)))
-        for (index, kind) in HostKind.allCases.enumerated() {
-            host.item(at: index)?.image = NSImage(systemSymbolName: kind.symbol, accessibilityDescription: nil)
-        }
-        hostPopUp = host
-        addSection([FormRow("Upload to", control: host)])
+        hostPopUp.target = self
+        hostPopUp.action = #selector(hostChanged(_:))
+        hostPopUp.autoenablesItems = false
+        addSection(
+            [FormRow("Upload to", control: hostPopUp)],
+            footer: "Add a host for each place you upload to: an S3-compatible bucket, or any HTTP upload API.")
 
-        sections[.picSorrycc] = picSections()
+        hostName.delegate = self
+        nameSection = addSection([FormRow("Name", detail: "Shown in the Upload To menu and History.", control: hostName)])
+        emptyFooter = addFooter("No hosts yet. Choose Add S3-Compatible or Add Custom HTTP above.")
+
         sections[.s3] = s3Sections()
         sections[.custom] = customSections()
 
@@ -674,32 +678,53 @@ final class HostsSettingsPane: SettingsPane, NSTextFieldDelegate, NSTextViewDele
         let testRow = FormRow("Test the connection", detail: Self.testHint, control: testControls)
         testRow.detailLabel.isSelectable = true
         self.testRow = testRow
-        addSection([testRow])
+        testSection = addSection([testRow])
 
-        load()
-        showSections()
+        showSelectedHost()
         NotificationCenter.default.addObserver(self, selector: #selector(hostMayHaveChanged), name: .settingsDidChange, object: nil)
     }
 
     /// Follows the menu bar's Upload To menu.
     @objc private func hostMayHaveChanged() {
-        guard Settings.host != shownHost else { return }
-        hostPopUp?.selectItem(at: HostKind.allCases.firstIndex(of: Settings.host) ?? 0)
-        showSections()
+        guard Settings.selectedHost?.id != shownHost?.id else { return }
+        showSelectedHost()
     }
 
-    private func picSections() -> [FormSection] {
-        picToken.delegate = self
-        return [
-            addSection(
-                [FormRow("Token", control: picToken)],
-                footer: "Sent as a Bearer token. " + Self.secretsNote)
-        ]
+    /// Hosts, then the actions that add and remove them.
+    private func rebuildPopUp() {
+        hostPopUp.removeAllItems()
+        let menu = hostPopUp.menu!
+        for host in Settings.hosts {
+            let item = NSMenuItem(title: host.name, action: nil, keyEquivalent: "")
+            item.representedObject = host.id
+            item.image = NSImage(systemSymbolName: host.provider.symbol, accessibilityDescription: nil)
+            menu.addItem(item)
+        }
+        if menu.items.isEmpty {
+            let none = NSMenuItem(title: "No Hosts", action: nil, keyEquivalent: "")
+            none.isEnabled = false
+            menu.addItem(none)
+        }
+        menu.addItem(.separator())
+        for provider in Provider.allCases {
+            let item = NSMenuItem(title: "Add \(provider.displayName)…", action: nil, keyEquivalent: "")
+            item.representedObject = provider
+            menu.addItem(item)
+        }
+        if let shownHost {
+            let item = NSMenuItem(title: "Remove “\(shownHost.name)”…", action: nil, keyEquivalent: "")
+            item.representedObject = "remove"
+            menu.addItem(item)
+        }
+        hostPopUp.selectItem(at: 0)
+        if let id = shownHost?.id {
+            hostPopUp.selectItem(at: hostPopUp.indexOfItem(withRepresentedObject: id))
+        }
     }
 
     private func s3Sections() -> [FormSection] {
         for field in [s3Endpoint, s3Region, s3Bucket, s3AccessKey, s3Secret, s3Key, s3Public] { field.delegate = self }
-        s3PathStyle = Self.toggle(true, target: self, action: #selector(saveS3))
+        s3PathStyle = Self.toggle(true, target: self, action: #selector(save))
         return [
             addSection(
                 [
@@ -728,10 +753,10 @@ final class HostsSettingsPane: SettingsPane, NSTextFieldDelegate, NSTextViewDele
         customURL.delegate = self
         customMethod.addItems(withTitles: ["POST", "PUT"])
         customMethod.target = self
-        customMethod.action = #selector(saveCustom)
+        customMethod.action = #selector(save)
         customBody = Self.popUp(
-            CustomConfig.Body.allCases, title: { $0.displayName }, selected: Settings.custom.body, target: self,
-            action: #selector(saveCustom))
+            CustomConfig.Body.allCases, title: { $0.displayName }, selected: .multipart, target: self,
+            action: #selector(save))
         let request = NSStackView(views: [customMethod, customBody])
         request.spacing = 8
         customField.delegate = self
@@ -766,41 +791,76 @@ final class HostsSettingsPane: SettingsPane, NSTextFieldDelegate, NSTextViewDele
         ]
     }
 
-    private func load() {
-        picToken.stringValue = Secrets.get(.picToken)
-        let s3 = Settings.s3
-        s3Endpoint.stringValue = s3.endpoint
-        s3Region.stringValue = s3.region
-        s3Bucket.stringValue = s3.bucket
-        s3AccessKey.stringValue = s3.accessKeyID
-        s3Secret.stringValue = Secrets.get(.s3Secret)
-        s3PathStyle.state = s3.pathStyle ? .on : .off
-        s3Key.stringValue = s3.keyTemplate
-        s3Public.stringValue = s3.publicURL
-        let custom = Settings.custom
-        customURL.stringValue = custom.url
-        customMethod.selectItem(withTitle: custom.method)
-        customField.stringValue = custom.fileField
-        customFields.string = custom.fields
-        customHeaders.string = Secrets.get(.customHeaders)
-        customPath.stringValue = custom.urlPath
-        customPrefix.stringValue = custom.urlPrefix
-    }
-
-    private func showSections() {
-        shownHost = Settings.host
-        for (kind, list) in sections {
-            for section in list { section.isHidden = kind != Settings.host }
+    /// Fills the form from the selected host and shows its provider's sections.
+    private func showSelectedHost() {
+        shownHost = Settings.selectedHost
+        rebuildPopUp()
+        if let host = shownHost {
+            hostName.stringValue = host.name
+            let secret = Secrets.get(host.secretKey)
+            switch host.provider {
+            case .s3:
+                let s3 = host.s3 ?? S3Config()
+                s3Endpoint.stringValue = s3.endpoint
+                s3Region.stringValue = s3.region
+                s3Bucket.stringValue = s3.bucket
+                s3AccessKey.stringValue = s3.accessKeyID
+                s3Secret.stringValue = secret
+                s3PathStyle.state = s3.pathStyle ? .on : .off
+                s3Key.stringValue = s3.keyTemplate
+                s3Public.stringValue = s3.publicURL
+            case .custom:
+                let custom = host.custom ?? CustomConfig()
+                customURL.stringValue = custom.url
+                customMethod.selectItem(withTitle: custom.method)
+                customBody.selectItem(at: customBody.indexOfItem(withRepresentedObject: custom.body.rawValue))
+                customField.stringValue = custom.fileField
+                customFields.string = custom.fields
+                customHeaders.string = secret
+                customPath.stringValue = custom.urlPath
+                customPrefix.stringValue = custom.urlPrefix
+            }
+        }
+        nameSection?.isHidden = shownHost == nil
+        emptyFooter?.isHidden = shownHost != nil
+        testSection?.isHidden = shownHost == nil
+        for (provider, list) in sections {
+            for section in list { section.isHidden = provider != shownHost?.provider }
         }
         showTestResult(Self.testHint)
         fitWindow()
     }
 
     @objc private func hostChanged(_ sender: NSPopUpButton) {
-        if let raw = sender.selectedItem?.representedObject as? String, let kind = HostKind(rawValue: raw) {
-            Settings.host = kind
+        switch sender.selectedItem?.representedObject {
+        case let id as UUID:
+            Settings.selectedHostID = id
+            showSelectedHost()
+        case let provider as Provider:
+            Settings.addHost(provider)
+            showSelectedHost()
+            view.window?.makeFirstResponder(hostName)
+        case let action as String where action == "remove":
+            rebuildPopUp()
+            confirmRemove()
+        default:
+            rebuildPopUp()
         }
-        showSections()
+    }
+
+    private func confirmRemove() {
+        guard let host = shownHost, let window = view.window else { return }
+        let alert = NSAlert()
+        alert.messageText = "Remove “\(host.name)”?"
+        alert.informativeText = "Its settings and keys are deleted. Files already uploaded stay on the host and in History."
+        alert.addButton(withTitle: "Remove")
+        alert.addButton(withTitle: "Cancel")
+        alert.buttons.first?.hasDestructiveAction = true
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+            Settings.removeHost(host)
+            self?.showSelectedHost()
+        }
     }
 
     func controlTextDidChange(_ obj: Notification) {
@@ -811,38 +871,43 @@ final class HostsSettingsPane: SettingsPane, NSTextFieldDelegate, NSTextViewDele
         save()
     }
 
-    private func save() {
-        Secrets.set(.picToken, picToken.stringValue.trimmingCharacters(in: .whitespacesAndNewlines))
-        saveS3()
-        saveCustom()
-    }
-
-    @objc private func saveS3() {
-        var s3 = Settings.s3
-        s3.endpoint = s3Endpoint.stringValue.trimmingCharacters(in: .whitespaces)
-        s3.region = s3Region.stringValue.trimmingCharacters(in: .whitespaces)
-        s3.bucket = s3Bucket.stringValue.trimmingCharacters(in: .whitespaces)
-        s3.accessKeyID = s3AccessKey.stringValue.trimmingCharacters(in: .whitespaces)
-        s3.pathStyle = s3PathStyle.state == .on
-        s3.keyTemplate = s3Key.stringValue.isEmpty ? S3Config().keyTemplate : s3Key.stringValue
-        s3.publicURL = s3Public.stringValue.trimmingCharacters(in: .whitespaces)
-        if s3 != Settings.s3 { Settings.s3 = s3 }
-        Secrets.set(.s3Secret, s3Secret.stringValue.trimmingCharacters(in: .whitespaces))
-    }
-
-    @objc private func saveCustom() {
-        var custom = Settings.custom
-        custom.url = customURL.stringValue.trimmingCharacters(in: .whitespaces)
-        custom.method = customMethod.titleOfSelectedItem ?? "POST"
-        if let raw = customBody.selectedItem?.representedObject as? String, let body = CustomConfig.Body(rawValue: raw) {
-            custom.body = body
+    /// Writes the form into the shown host.
+    @objc private func save() {
+        guard var host = shownHost else { return }
+        let name = hostName.stringValue.trimmingCharacters(in: .whitespaces)
+        if !name.isEmpty, name != host.name {
+            host.name = name
+            if let item = hostPopUp.selectedItem { item.title = name }
+            hostPopUp.lastItem?.title = "Remove “\(name)”…"
         }
-        custom.fileField = customField.stringValue.trimmingCharacters(in: .whitespaces)
-        custom.fields = customFields.string
-        custom.urlPath = customPath.stringValue.trimmingCharacters(in: .whitespaces)
-        custom.urlPrefix = customPrefix.stringValue.trimmingCharacters(in: .whitespaces)
-        if custom != Settings.custom { Settings.custom = custom }
-        Secrets.set(.customHeaders, customHeaders.string)
+        switch host.provider {
+        case .s3:
+            var s3 = host.s3 ?? S3Config()
+            s3.endpoint = s3Endpoint.stringValue.trimmingCharacters(in: .whitespaces)
+            s3.region = s3Region.stringValue.trimmingCharacters(in: .whitespaces)
+            s3.bucket = s3Bucket.stringValue.trimmingCharacters(in: .whitespaces)
+            s3.accessKeyID = s3AccessKey.stringValue.trimmingCharacters(in: .whitespaces)
+            s3.pathStyle = s3PathStyle.state == .on
+            s3.keyTemplate = s3Key.stringValue.isEmpty ? S3Config().keyTemplate : s3Key.stringValue
+            s3.publicURL = s3Public.stringValue.trimmingCharacters(in: .whitespaces)
+            host.s3 = s3
+            Secrets.set(host.secretKey, s3Secret.stringValue.trimmingCharacters(in: .whitespaces))
+        case .custom:
+            var custom = host.custom ?? CustomConfig()
+            custom.url = customURL.stringValue.trimmingCharacters(in: .whitespaces)
+            custom.method = customMethod.titleOfSelectedItem ?? "POST"
+            if let raw = customBody.selectedItem?.representedObject as? String, let body = CustomConfig.Body(rawValue: raw) {
+                custom.body = body
+            }
+            custom.fileField = customField.stringValue.trimmingCharacters(in: .whitespaces)
+            custom.fields = customFields.string
+            custom.urlPath = customPath.stringValue.trimmingCharacters(in: .whitespaces)
+            custom.urlPrefix = customPrefix.stringValue.trimmingCharacters(in: .whitespaces)
+            host.custom = custom
+            Secrets.set(host.secretKey, customHeaders.string)
+        }
+        shownHost = host
+        Settings.update(host)
     }
 
     @objc private func test(_ sender: Any?) {
@@ -851,13 +916,13 @@ final class HostsSettingsPane: SettingsPane, NSTextFieldDelegate, NSTextViewDele
         testSpinner.startAnimation(nil)
         showTestResult("Uploading a small test image…")
         let host = Uploader.currentHost()
-        let kind = Settings.host
+        let id = shownHost?.id
         Task {
             let result = await Uploader.shared.test(host)
             testButton.isEnabled = true
             testSpinner.stopAnimation(nil)
             // The form may have changed to another host meanwhile.
-            guard kind == shownHost else { return }
+            guard id == shownHost?.id else { return }
             switch result {
             case .success(let url): showTestResult("Works. \(url)", color: .systemGreen)
             case .failure(let error): showTestResult(error.localizedDescription, color: .systemRed)

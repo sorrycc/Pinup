@@ -246,13 +246,21 @@ final class StatusItemController: NSObject, NSMenuDelegate, NSWindowDelegate, NS
 
         menu.addItem(.separator())
         let hosts = NSMenu()
-        for kind in HostKind.allCases {
-            let row = NSMenuItem(title: kind.displayName, action: #selector(pickHost(_:)), keyEquivalent: "")
+        let selected = Settings.selectedHost?.id
+        for host in Settings.hosts {
+            let row = NSMenuItem(title: host.name, action: #selector(pickHost(_:)), keyEquivalent: "")
             row.target = self
-            row.representedObject = kind.rawValue
-            row.state = kind == Settings.host ? .on : .off
+            row.representedObject = host.id
+            row.state = host.id == selected ? .on : .off
             hosts.addItem(row)
         }
+        if hosts.items.isEmpty {
+            let none = NSMenuItem(title: "No Hosts", action: nil, keyEquivalent: "")
+            none.isEnabled = false
+            hosts.addItem(none)
+        }
+        hosts.addItem(.separator())
+        hosts.addItem(item("Add Host…", nil, #selector(addHost(_:)), target: self))
         let hostItem = item("Upload To", "server.rack", nil, target: nil)
         hostItem.submenu = hosts
         menu.addItem(hostItem)
@@ -368,8 +376,12 @@ final class StatusItemController: NSObject, NSMenuDelegate, NSWindowDelegate, NS
     }
 
     @objc private func pickHost(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String, let kind = HostKind(rawValue: raw) else { return }
-        Settings.host = kind
+        guard let id = sender.representedObject as? UUID else { return }
+        Settings.selectedHostID = id
+    }
+
+    @objc private func addHost(_ sender: NSMenuItem) {
+        Uploader.shared.openHostSettings?()
     }
 
     @objc private func pickFormat(_ sender: NSMenuItem) {

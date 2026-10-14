@@ -18,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.mainMenu = MainMenu.build()
+        Settings.migrateHosts()
         // `-appearance light` or `dark`, for checking the design in both.
         switch UserDefaults.standard.string(forKey: "appearance") {
         case "light": NSApp.appearance = NSAppearance(named: .aqua)

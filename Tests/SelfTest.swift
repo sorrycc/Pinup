@@ -56,9 +56,34 @@ struct SelfTest {
         let customBody = try JSONSerialization.jsonObject(with: Data(contentsOf: customRequest.body)) as? [String: String]
         check(customBody == ["album": "cats", "fileName": "c \"q\".png", "image": Data("hello".utf8).base64EncodedString()], "custom JSON body", "\(String(describing: customBody))")
         check(customRequest.request.value(forHTTPHeaderField: "Authorization") == "Bearer x", "custom headers")
-        let picRequest = try PicSorryccHost(token: "t").request(for: customPrepared, scratch: scratch)
-        let picBody = try JSONSerialization.jsonObject(with: Data(contentsOf: picRequest.body)) as? [String: String]
-        check(picBody?["file"] == Data("hello".utf8).base64EncodedString() && picBody?["fileName"] == "c \"q\".png", "pic body")
+        // A token API's JSON shape: the file under "file", the name beside it,
+        // and the whole link as "data" in the reply
+        var token = CustomConfig()
+        token.url = "https://example.com/api/upload"
+        token.body = .json
+        token.urlPath = "data"
+        let tokenRequest = try CustomHost(config: token, headers: "Authorization: Bearer t").request(for: customPrepared, scratch: scratch)
+        let tokenBody = try JSONSerialization.jsonObject(with: Data(contentsOf: tokenRequest.body)) as? [String: String]
+        check(tokenBody == ["file": Data("hello".utf8).base64EncodedString(), "fileName": "c \"q\".png"], "token JSON body", "\(String(describing: tokenBody))")
+        let tokenLink = try CustomHost(config: token, headers: "").link(from: Data(#"{"data":"https://x/a.png"}"#.utf8), file: customPrepared, request: tokenRequest)
+        check(tokenLink == "https://x/a.png", "link at top-level key", tokenLink)
+
+        // Hosts: Codable round trip, and the move from single configs
+        var s3Host = HostConfig(name: "Mine", provider: .s3)
+        s3Host.s3?.bucket = "b"
+        let decodedHosts = try JSONDecoder().decode([HostConfig].self, from: JSONEncoder().encode([s3Host]))
+        check(decodedHosts == [s3Host] && decodedHosts[0].custom == nil, "host round trip")
+        check(s3Host.secretKey != HostConfig(name: "Mine", provider: .s3).secretKey, "secret keys per host")
+        var oldS3 = S3Config()
+        oldS3.endpoint = "https://acc.r2.cloudflarestorage.com"
+        var oldCustom = CustomConfig()
+        oldCustom.url = "https://up.example.com/{name}"
+        let moved = HostConfig.migrated(s3: oldS3, s3Secret: "k", custom: oldCustom, headers: "")
+        check(moved.map(\.name) == ["acc.r2.cloudflarestorage.com", "up.example.com"] && moved.map(\.provider) == [.s3, .custom], "migrated names", "\(moved.map(\.name))")
+        oldS3.bucket = "pics"
+        check(HostConfig.migrated(s3: oldS3, s3Secret: "", custom: nil, headers: "").map(\.name) == ["pics"], "migrated S3 named by bucket")
+        check(HostConfig.migrated(s3: S3Config(), s3Secret: "", custom: CustomConfig(), headers: "").isEmpty, "untouched configs not migrated")
+        check(HostConfig.migrated(s3: nil, s3Secret: "", custom: CustomConfig(), headers: "X: y").count == 1, "custom with only headers migrated")
 
         custom.fileField = "fileName"
         let nameFieldRequest = try CustomHost(config: custom, headers: "").request(for: customPrepared, scratch: scratch)

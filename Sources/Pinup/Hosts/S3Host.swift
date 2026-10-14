@@ -19,9 +19,9 @@ struct S3Config: Codable, Equatable, Sendable {
 }
 
 struct S3Host: UploadHost {
+    var name = Provider.s3.displayName
     let config: S3Config
     let secret: String
-    var name: String { HostKind.s3.displayName }
 
     func request(for file: PreparedFile, scratch: URL) throws -> UploadRequest {
         try request(for: file, key: PathTemplate.render(config.keyTemplate, file: file), date: Date())
@@ -33,7 +33,7 @@ struct S3Host: UploadHost {
         guard var components = URLComponents(string: endpoint), components.scheme != nil, let host = components.host,
             !config.bucket.isEmpty, !config.accessKeyID.isEmpty, !secret.isEmpty
         else {
-            throw UploadError.notConfigured("Fill in the endpoint, bucket and keys for S3 in Settings > Hosts.")
+            throw UploadError.notConfigured("Fill in the endpoint, bucket and keys for \(name) in Settings > Hosts.")
         }
         let encodedKey = key.split(separator: "/", omittingEmptySubsequences: false).map { Self.uriEncode(String($0)) }
             .joined(separator: "/")
@@ -46,7 +46,7 @@ struct S3Host: UploadHost {
             components.percentEncodedPath = "\(prefix)/\(encodedKey)"
         }
         guard let url = components.url, let signedHost = components.host else {
-            throw UploadError.notConfigured("The S3 endpoint isn't a valid URL.")
+            throw UploadError.notConfigured("The endpoint for \(name) isn't a valid URL.")
         }
         let hostHeader = components.port.map { "\(signedHost):\($0)" } ?? signedHost
 

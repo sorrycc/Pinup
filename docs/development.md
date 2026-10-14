@@ -40,7 +40,7 @@ PINUP_HOME=/tmp/pinup-test build/Pinup.app/Contents/MacOS/Pinup -show history
 | Path | Contents |
 |---|---|
 | `Sources/Pinup/` | The app: menu bar item, uploader, History, Settings, confirmation HUD |
-| `Sources/Pinup/Hosts/` | pic.sorrycc.com, S3-compatible and custom HTTP hosts |
+| `Sources/Pinup/Hosts/` | The S3-compatible and custom HTTP providers |
 | `Tests/SelfTest.swift` | Checks run by `scripts/selftest.sh` |
 | `scripts/bundle.sh` | Builds and assembles `build/Pinup.app` |
 | `scripts/make-icon.swift` | Draws the app icon |

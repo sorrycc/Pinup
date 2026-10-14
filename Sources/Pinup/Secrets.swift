@@ -1,26 +1,21 @@
 import Foundation
 
-/// Host tokens and keys, in secrets.json in Pinup's folder, readable by your
+/// Host tokens and keys, by host, in secrets.json in Pinup's folder, readable by your
 /// user only. Not the keychain: an ad-hoc signed app loses keychain access
 /// each time it is rebuilt, and macOS then asks for the login password.
 @MainActor
 enum Secrets {
-    enum Item: String, CaseIterable {
-        case picToken = "pic.sorrycc.token"
-        case s3Secret = "s3.secretAccessKey"
-        case customHeaders = "custom.headers"
-    }
-
     private static let url = AppPaths.root.appendingPathComponent("secrets.json")
     private static var values: [String: String] = load()
 
-    static func get(_ item: Item) -> String {
-        values[item.rawValue] ?? ""
+    static func get(_ key: String) -> String {
+        values[key] ?? ""
     }
 
-    static func set(_ item: Item, _ value: String) {
-        guard get(item) != value else { return }
-        values[item.rawValue] = value.isEmpty ? nil : value
+    /// An empty value removes the key.
+    static func set(_ key: String, _ value: String) {
+        guard get(key) != value else { return }
+        values[key] = value.isEmpty ? nil : value
         save()
     }
 

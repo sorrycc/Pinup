@@ -34,6 +34,20 @@ protocol UploadHost: Sendable {
     func link(from data: Data, file: PreparedFile, request: UploadRequest) throws -> String
 }
 
+/// Stands in when no host has been added, so an upload fails with a pointer
+/// to Settings.
+struct NoHost: UploadHost {
+    var name: String { "No Host" }
+
+    func request(for file: PreparedFile, scratch: URL) throws -> UploadRequest {
+        throw UploadError.notConfigured("Add a host in Settings > Hosts.")
+    }
+
+    func link(from data: Data, file: PreparedFile, request: UploadRequest) throws -> String {
+        throw UploadError.notConfigured("Add a host in Settings > Hosts.")
+    }
+}
+
 extension UploadHost {
     /// Text from an error reply worth showing: JSON `message`/`error`/`msg`,
     /// an S3 `<Message>`, or the start of the body.

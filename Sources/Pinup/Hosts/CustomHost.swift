@@ -33,16 +33,16 @@ struct CustomConfig: Codable, Equatable, Sendable {
 }
 
 struct CustomHost: UploadHost {
+    var name = Provider.custom.displayName
     let config: CustomConfig
     /// One `Name: value` per line.
     let headers: String
-    var name: String { HostKind.custom.displayName }
 
     func request(for file: PreparedFile, scratch: URL) throws -> UploadRequest {
         let address = config.url.trimmingCharacters(in: .whitespaces)
             .replacingOccurrences(of: "{name}", with: file.name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? file.name)
         guard let url = URL(string: address), url.scheme == "http" || url.scheme == "https" else {
-            throw UploadError.notConfigured("Set the upload URL for Custom HTTP in Settings > Hosts.")
+            throw UploadError.notConfigured("Set the upload URL for \(name) in Settings > Hosts.")
         }
         var request = URLRequest(url: url)
         request.httpMethod = config.method.isEmpty ? "POST" : config.method.uppercased()

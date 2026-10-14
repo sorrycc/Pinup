@@ -119,12 +119,13 @@ final class Uploader {
         return URLSession(configuration: configuration)
     }()
 
-    /// The host settings point at, with its secrets.
+    /// The selected host, with its secret.
     static func currentHost() -> any UploadHost {
-        switch Settings.host {
-        case .picSorrycc: PicSorryccHost(token: Secrets.get(.picToken))
-        case .s3: S3Host(config: Settings.s3, secret: Secrets.get(.s3Secret))
-        case .custom: CustomHost(config: Settings.custom, headers: Secrets.get(.customHeaders))
+        guard let host = Settings.selectedHost else { return NoHost() }
+        let secret = Secrets.get(host.secretKey)
+        switch host.provider {
+        case .s3: return S3Host(name: host.name, config: host.s3 ?? S3Config(), secret: secret)
+        case .custom: return CustomHost(name: host.name, config: host.custom ?? CustomConfig(), headers: secret)
         }
     }
 

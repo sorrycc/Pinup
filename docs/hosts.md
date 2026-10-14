@@ -1,18 +1,14 @@
 # Hosts
 
-Settings > Hosts picks where uploads go and holds each host's settings. Changes save as you type. Test Upload sends a small generated image and shows the link it got back, without adding it to History.
+A host is a named place uploads go, made from a provider: S3-compatible or Custom HTTP. Add as many as you like, such as two buckets or a bucket and an API, and switch between them.
+
+In Settings > Hosts, the Upload to menu lists your hosts. **Add S3-Compatible…** and **Add Custom HTTP…** at its bottom create a new host, and **Remove** deletes the one shown along with its keys. The menu bar's Upload To menu switches hosts too. Each host's name appears in that menu and in History.
+
+Changes save as you type. Test Upload sends a small generated image to the host shown and gives back the link it got, without adding it to History.
 
 Addresses should be `https://`. macOS lets an app use plain `http://` only for `localhost` and IP addresses, such as a MinIO or NAS on your own network; an `http://` address with any other name fails with a message saying so.
 
-## pic.sorrycc.com
-
-| Field | Meaning |
-|---|---|
-| Token | Sent as `Authorization: Bearer <token>` |
-
-The file goes up as base64 inside a JSON body, and the server answers `{"data": "<url>"}`.
-
-## S3-compatible
+## S3-compatible provider
 
 Pinup signs each upload with AWS Signature Version 4 and sends it as a single `PUT`.
 
@@ -42,7 +38,7 @@ Pinup doesn't set object ACLs. Make the bucket, or a CDN in front of it, publicl
 
 For R2, set Public URL to the bucket's r2.dev address or your custom domain.
 
-## Custom HTTP
+## Custom HTTP provider
 
 For any upload API that takes a file in a request and returns a link.
 
@@ -73,3 +69,15 @@ The three ways to send the file:
 | File field | `image` |
 | Headers | `Authorization: Client-ID <your id>` |
 | Link at | `data.link` |
+
+### Example: a token API with a JSON body
+
+For an API that takes `{"fileName": …, "file": "<base64>"}` with a Bearer token and answers `{"data": "<url>"}`:
+
+| Field | Value |
+|---|---|
+| URL | `https://images.example.com/api/upload` |
+| Request | POST, JSON with Base64 |
+| File field | `file` |
+| Headers | `Authorization: Bearer <your token>` |
+| Link at | `data` |
