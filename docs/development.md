@@ -36,7 +36,7 @@ build/darwin-arm64/Pinup.app/Contents/MacOS/Pinup -appearance light -show histor
 PINUP_HOME=/tmp/pinup-test build/darwin-arm64/Pinup.app/Contents/MacOS/Pinup -show history
 ```
 
-`scripts/dev.sh` sets `PINUP_HOME` to `~/Library/Application Support/Pinup-dev`, so a development build never touches your everyday Pinup's data.
+`scripts/dev.sh` builds Pinup as a bare binary in `.mygo/dev`, runs it, and builds and restarts it when a Go file, an asset or `mygo.json` changes; a build that fails keeps the last one running. It passes its arguments to the app, as `scripts/dev.sh -show hosts`, and sets `PINUP_HOME` to `~/Library/Application Support/Pinup-dev`, so a development build never touches your everyday Pinup's data. It runs a bare binary rather than `go tool mygo dev`'s "Pinup Dev" bundle because macOS 26 keeps that bundle's menu bar icon hidden, even with "Allow in the Menu Bar" on. Without a bundle, opening files and `pinup://` links and Open at Login don't reach the development build.
 
 ## Project layout
 
