@@ -15,4 +15,4 @@ require (
 	golang.org/x/image v0.46.0 // indirect
 )
 
-replace github.com/egoist/mygo => ../mygo-tray
+replace github.com/egoist/mygo => github.com/sorrycc/mygo v0.4.9-0.20261015144536-174333fbe05c

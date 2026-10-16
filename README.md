@@ -36,12 +36,16 @@ Pinup is written in Go, with its windows drawn by [MyGo](https://github.com/egoi
 
 ## Installation
 
+Download the disk image for your Mac, Apple silicon (`arm64`) or Intel (`amd64`), from the [latest release](https://github.com/sorrycc/Pinup/releases/latest), and drag Pinup to Applications. Pinup checks for a new version once a day and installs it when you agree; **Check for Updates…** in the menu checks now.
+
+To build it yourself:
+
 ```sh
 go tool mygo build
 open build/darwin-arm64/Pinup.app
 ```
 
-MyGo builds and ad-hoc signs `Pinup.app`, and a disk image beside it. Move the app to `/Applications` to keep it.
+MyGo builds and ad-hoc signs `Pinup.app`, and a disk image beside it. A copy you build doesn't update itself.
 
 On first launch, add a host in **Settings > Hosts** and press **Test Upload** to check it.
 
@@ -85,7 +89,7 @@ go test ./...              # run the tests, each in a temporary folder
 scripts/dev.sh             # run with live reload, with data of its own
 ```
 
-See [Development](docs/development.md) for launch flags, environment variables and the project layout.
+See [Development](docs/development.md) for launch flags, environment variables, the project layout and how releases are made.
 
 ## License
 

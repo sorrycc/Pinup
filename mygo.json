@@ -7,6 +7,10 @@
   "out": "build",
   "icon": "Resources/Pinup-1024.png",
   "urlSchemes": ["pinup"],
+  "updates": {
+    "publicKey": "wMC0aKXPrDgWS5Q8QveZVY9/Ym521tTlWqKrqP81oT0=",
+    "github": "sorrycc/Pinup"
+  },
   "macos": {
     "minimumSystemVersion": "14.0",
     "infoPlist": {

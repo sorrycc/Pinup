@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/plugins/updater"
 	"github.com/egoist/mygo/ui"
 
 	"pinup/internal/hosts"
@@ -215,6 +217,7 @@ func (s *settingsWindow) generalPane(c *ui.Context) {
 			}
 		})
 	})
+	s.updatesCard(c)
 	entries := s.a.hist.Entries()
 	detail := "No uploads yet."
 	if len(entries) > 0 {
@@ -229,6 +232,38 @@ func (s *settingsWindow) generalPane(c *ui.Context) {
 			if ui.Button(c, "Clear History…").Disabled(len(entries) == 0).Clicked() {
 				s.confirm("Clear the upload history?", "This removes the list and its thumbnails. The uploaded files stay on their host.",
 					"Clear History", s.a.hist.Clear)
+			}
+		})
+	})
+}
+
+// updatesCard shows Pinup's version and, in a copy that updates itself,
+// whether it checks for new ones.
+func (s *settingsWindow) updatesCard(c *ui.Context) {
+	version := "Development build"
+	if v := mygo.App.Version(); v != "" {
+		version = "Version " + v
+	}
+	if !s.a.canUpdate {
+		card(c, "", func() {
+			formRow(c, "Pinup "+strings.TrimPrefix(version, "Version "), "This copy doesn't update itself.", func() {})
+		})
+		return
+	}
+	checked := "Not checked yet."
+	if t := updater.LastCheck(); !t.IsZero() {
+		checked = "Last checked " + strings.ToLower(relativeTime(t, time.Now())) + "."
+	}
+	card(c, "Pinup checks GitHub for a new release once a day, and asks before installing it.", func() {
+		formRow(c, "Check for updates automatically", "", func() {
+			on := updater.AutomaticChecks()
+			if ui.Switch(c.Key("updates"), &on).Label("Check for updates automatically").Changed() {
+				updater.SetAutomaticChecks(on)
+			}
+		})
+		formRow(c, version, checked, func() {
+			if ui.Button(c, "Check Now").Clicked() {
+				updater.CheckForUpdates()
 			}
 		})
 	})

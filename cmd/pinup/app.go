@@ -46,6 +46,9 @@ type app struct {
 	// appearance is "light" or "dark" from -appearance, for checking the
 	// design in both.
 	appearance string
+	// canUpdate is whether this copy updates itself: a release build,
+	// where it may write. Development builds don't.
+	canUpdate bool
 
 	posts chan func()
 	// writeClipboard and open put text on the clipboard and open a link;

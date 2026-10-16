@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/plugins/updater"
+	"github.com/egoist/mygo/plugins/updater/native"
 
 	"pinup/internal/paths"
 )
@@ -19,6 +21,9 @@ func main() {
 		return // the running Pinup takes over
 	}
 	a := newApp()
+	// Checks GitHub for a new release once a day, and installs it when the
+	// user agrees.
+	mygo.Use(native.Plugin)
 	show := flag("-show")
 	a.appearance = flag("-appearance")
 
@@ -49,6 +54,10 @@ func main() {
 	mygo.App.OnWillQuit(func(*mygo.QuitEvent) { a.hist.Flush() })
 
 	mygo.App.WhenReady(func() {
+		a.canUpdate = mygo.Updater.Enabled()
+		if a.canUpdate {
+			updater.OnChange(a.redraw)
+		}
 		mygo.App.SetMenu(a.mainMenu())
 		a.tray = newTrayIcon(a)
 		a.up.OnProgress = func(p float64) {
@@ -158,15 +167,19 @@ func (a *app) handleURL(raw string) {
 // mainMenu is the menu bar shown while a Pinup window is in front. Edit
 // is there so copy and paste work in Settings fields.
 func (a *app) mainMenu() *mygo.Menu {
+	appItems := []*mygo.MenuItem{{Label: "About Pinup", Click: click(a.showAbout)}}
+	if a.canUpdate {
+		appItems = append(appItems, updater.MenuItem())
+	}
+	appItems = append(appItems,
+		mygo.Separator(),
+		&mygo.MenuItem{Label: "Settings…", Accelerator: "Cmd+,", Click: click(func() { a.showSettings(paneGeneral) })},
+		mygo.Separator(),
+		&mygo.MenuItem{Role: mygo.RoleHide},
+		&mygo.MenuItem{Label: "Quit Pinup", Accelerator: "Cmd+Q", Click: click(mygo.App.Quit)},
+	)
 	return mygo.NewMenu([]*mygo.MenuItem{
-		{Label: "Pinup", Submenu: []*mygo.MenuItem{
-			{Label: "About Pinup", Click: click(a.showAbout)},
-			mygo.Separator(),
-			{Label: "Settings…", Accelerator: "Cmd+,", Click: click(func() { a.showSettings(paneGeneral) })},
-			mygo.Separator(),
-			{Role: mygo.RoleHide},
-			{Label: "Quit Pinup", Accelerator: "Cmd+Q", Click: click(mygo.App.Quit)},
-		}},
+		{Label: "Pinup", Submenu: appItems},
 		{Label: "File", Submenu: []*mygo.MenuItem{
 			{Label: "Upload Files…", Accelerator: "Cmd+O", Click: click(a.uploadFiles)},
 			{Label: "Upload from Clipboard", Click: click(a.uploadClipboard)},

@@ -12,3 +12,6 @@
 - Plain `http://` addresses work for any host, not only `localhost` and IP
   addresses.
 - History's day headers stay at the top as their uploads scroll under them.
+- Pinup is signed and notarized, and updates itself: it checks for a new
+  version once a day and installs it when you agree. Check for Updates… in
+  the menu checks now, and Settings > General turns the daily check off.

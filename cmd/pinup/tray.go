@@ -7,6 +7,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/plugins/updater"
 
 	"pinup/internal/capture"
 	"pinup/internal/history"
@@ -180,8 +181,11 @@ func (a *app) trayMenu() []*mygo.MenuItem {
 		&mygo.MenuItem{Label: "Copy As", Symbol: "link", Submenu: formatItems},
 		mygo.Separator(),
 		&mygo.MenuItem{Label: "Settings…", Symbol: "gearshape", Accelerator: "Cmd+,", Click: click(func() { a.showSettings(paneGeneral) })},
-		&mygo.MenuItem{Label: "Quit Pinup", Accelerator: "Cmd+Q", Click: click(mygo.App.Quit)},
 	)
+	if a.canUpdate {
+		items = append(items, &mygo.MenuItem{Label: "Check for Updates…", Symbol: "arrow.down.circle", Click: click(updater.CheckForUpdates)})
+	}
+	items = append(items, &mygo.MenuItem{Label: "Quit Pinup", Accelerator: "Cmd+Q", Click: click(mygo.App.Quit)})
 	return items
 }
 

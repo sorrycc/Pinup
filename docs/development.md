@@ -11,7 +11,13 @@ go tool mygo vet                   # go vet, and MyGo's check of native UI build
 
 The view tests drive the History and Settings windows without a window, with MyGo's `ui.Tester`.
 
-Pinup builds against MyGo's `tray-drop-rich-menu` branch, which adds files dropped on the menu bar icon and the icons, subtitles, section headers and alternates of its menu. `go.mod` points at it with a `replace`.
+Pinup builds against MyGo's `tray-drop-rich-menu` branch, which adds files dropped on the menu bar icon and the icons, subtitles, section headers and alternates of its menu. `go.mod` points at that branch's commit on the [sorrycc/mygo](https://github.com/sorrycc/mygo) fork with a `replace`, so the Release workflow can build it. To build against a local checkout instead, use a workspace, which `.gitignore` keeps out of the repository:
+
+```sh
+go work init . ../mygo-tray
+```
+
+After pushing a new commit of the branch to the fork, move `go.mod` to it with `go mod edit -replace github.com/egoist/mygo=github.com/sorrycc/mygo@<commit> && go mod tidy`.
 
 ## Launch flags
 
@@ -38,6 +44,29 @@ PINUP_HOME=/tmp/pinup-test build/darwin-arm64/Pinup.app/Contents/MacOS/Pinup -sh
 
 `scripts/dev.sh` builds Pinup as a bare binary in `.mygo/dev`, runs it, and builds and restarts it when a Go file, an asset or `mygo.json` changes; a build that fails keeps the last one running. It passes its arguments to the app, as `scripts/dev.sh -show hosts`, and sets `PINUP_HOME` to `~/Library/Application Support/Pinup-dev`, so a development build never touches your everyday Pinup's data. It runs a bare binary rather than `go tool mygo dev`'s "Pinup Dev" bundle because macOS 26 keeps that bundle's menu bar icon hidden, even with "Allow in the Menu Bar" on. Without a bundle, opening files and `pinup://` links and Open at Login don't reach the development build.
 
+## Releases
+
+```sh
+scripts/bump.sh patch      # or minor, major, or a version such as 1.2.0
+```
+
+`scripts/bump.sh` sets the version in `mygo.json`, renames `## Unreleased` in `CHANGELOG.md` to the version, commits both as `v<version>` with a tag of the same name, and after asking pushes `main` and the tag. It stops first when `main` isn't clean and in step with `origin/main`, when the tag or release exists, when the changelog has no notes for the version, or when a secret the Release workflow needs isn't set.
+
+The tag starts [the Release workflow](../.github/workflows/release.yml), on a macOS runner. It checks that the tag matches `mygo.json` and the changelog, runs the tests, signs Pinup with the Developer ID, notarizes it, builds it for Apple silicon and Intel, uploads the disk images, update archives, delta updates and update manifests to a draft release whose notes are the version's changelog section, and publishes it. Installed copies read the manifests of the latest release, show the same notes in their update window, and install the update when the user agrees.
+
+The workflow uses these repository secrets:
+
+| Secret | Contents |
+|---|---|
+| `MACOS_CERTIFICATE` | The Developer ID Application certificate and its key, as a base64 `.p12` |
+| `MACOS_CERTIFICATE_PASSWORD` | The password of the `.p12` |
+| `APPLE_ID`, `APPLE_TEAM_ID`, `APPLE_APP_PASSWORD` | The Apple account, team and app-specific password that notarize |
+| `MYGO_UPDATER_PRIVATE_KEY` | The secret key that signs updates, from `go tool mygo keygen` |
+
+Installed copies accept only updates signed with the key whose public half is `updates.publicKey` in `mygo.json`: losing the secret key strands them, so keep a copy outside GitHub.
+
+A failed workflow leaves a draft release. Fix the cause, delete the draft and the tag (`gh release delete v<version> --cleanup-tag`), and tag again, or re-run the workflow when nothing in the repository needs to change.
+
 ## Project layout
 
 | Path | Contents |
@@ -50,5 +79,7 @@ PINUP_HOME=/tmp/pinup-test build/darwin-arm64/Pinup.app/Contents/MacOS/Pinup -sh
 | `internal/history/` | `history.json` and its thumbnails |
 | `internal/settings/` | `settings.json`, `secrets.json`, and the move from the Swift version's user defaults |
 | `internal/capture/` | The clipboard and screenshots |
-| `mygo.json` | The app's name, identifier, version, icon, URL scheme and `Info.plist` keys |
+| `mygo.json` | The app's name, identifier, version, icon, URL scheme, update feed and `Info.plist` keys |
+| `scripts/` | `dev.sh`, and `bump.sh` and `release-notes.sh` for releases |
+| `.github/workflows/` | Tests on pushes and pull requests, and the release of each `v*` tag |
 | `docs/` | User documentation, and [the architecture](ARCHITECTURE.md) |
