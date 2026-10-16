@@ -3,17 +3,21 @@
 ## Build and test
 
 ```sh
-scripts/bundle.sh                  # release build of build/Pinup.app
-scripts/bundle.sh debug            # debug build
-scripts/selftest.sh                # logic, S3 signing and window smoke tests, in a temporary folder
-swift scripts/make-icon.swift      # redraw Resources/Pinup.icns
+go tool mygo build                 # build/darwin-arm64/Pinup.app and a disk image
+scripts/dev.sh                     # run with live reload, with data of its own
+go test ./...                      # logic, S3 signing, image processing and view tests, in temporary folders
+go tool mygo vet                   # go vet, and MyGo's check of native UI build lifetimes
 ```
+
+The view tests drive the History and Settings windows without a window, with MyGo's `ui.Tester`.
+
+Pinup builds against MyGo's `tray-drop-rich-menu` branch, which adds files dropped on the menu bar icon and the icons, subtitles, section headers and alternates of its menu. `go.mod` points at it with a `replace`.
 
 ## Launch flags
 
 ```sh
-open build/Pinup.app --args -show hosts
-open build/Pinup.app --args -appearance light -show history
+build/darwin-arm64/Pinup.app/Contents/MacOS/Pinup -show hosts
+build/darwin-arm64/Pinup.app/Contents/MacOS/Pinup -appearance light -show history
 ```
 
 | Flag | Values |
@@ -25,23 +29,26 @@ open build/Pinup.app --args -appearance light -show history
 
 | Variable | Effect |
 |---|---|
-| `PINUP_HOME` | Folder for history, thumbnails and secrets, in place of `~/Library/Application Support/Pinup` |
-| `PINUP_BUNDLE_ID` | Bundle identifier `scripts/bundle.sh` writes. Default `dev.sorrycc.pinup.app` |
-| `PINUP_OUT` | Output folder for `scripts/bundle.sh`. Default `build` |
+| `PINUP_HOME` | Folder for settings, history, thumbnails and secrets, in place of `~/Library/Application Support/Pinup` |
+| `PINUP_BUNDLE_ID` | The user defaults the first launch moves settings over from. Default `dev.sorrycc.pinup.app`, the Swift version's |
 
 ```sh
-PINUP_HOME=/tmp/pinup-test build/Pinup.app/Contents/MacOS/Pinup -show history
+PINUP_HOME=/tmp/pinup-test build/darwin-arm64/Pinup.app/Contents/MacOS/Pinup -show history
 ```
 
-`PINUP_HOME` doesn't separate settings, which still come from the app's user defaults. For a fully separate copy, build with its own `PINUP_BUNDLE_ID` and `PINUP_OUT`.
+`scripts/dev.sh` sets `PINUP_HOME` to `~/Library/Application Support/Pinup-dev`, so a development build never touches your everyday Pinup's data.
 
 ## Project layout
 
 | Path | Contents |
 |---|---|
-| `Sources/Pinup/` | The app: menu bar item, uploader, History, Settings, confirmation HUD |
-| `Sources/Pinup/Hosts/` | The S3-compatible and custom HTTP providers |
-| `Tests/SelfTest.swift` | Checks run by `scripts/selftest.sh` |
-| `scripts/bundle.sh` | Builds and assembles `build/Pinup.app` |
-| `scripts/make-icon.swift` | Draws the app icon |
-| `docs/` | User documentation |
+| `cmd/pinup/` | The app: menu bar icon and menu, HUD, History, Settings, Welcome, shortcut recorder |
+| `internal/hosts/` | The S3-compatible and custom HTTP providers |
+| `internal/upload/` | The upload queue: three at a time, progress, retries and the Failed folder |
+| `internal/imageproc/` | Conversion, location removal and thumbnails, through ImageIO |
+| `internal/macos/` | CoreFoundation, ImageIO and the preferences system, called through purego |
+| `internal/history/` | `history.json` and its thumbnails |
+| `internal/settings/` | `settings.json`, `secrets.json`, and the move from the Swift version's user defaults |
+| `internal/capture/` | The clipboard and screenshots |
+| `mygo.json` | The app's name, identifier, version, icon, URL scheme and `Info.plist` keys |
+| `docs/` | User documentation, and [the architecture](ARCHITECTURE.md) |

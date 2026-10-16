@@ -47,11 +47,12 @@ Pinup stores its data in `~/Library/Application Support/Pinup`:
 
 | File | Contents |
 |---|---|
+| `settings.json` | Your settings and hosts |
 | `history.json` | Up to 2,000 past uploads |
 | `Thumbnails/` | One small JPEG or PNG per upload |
 | `secrets.json` | Tokens, the S3 secret key and custom headers, readable only by your user |
 | `Failed/` | Screenshots and pasted images whose upload failed, until you retry or discard them |
 
-Settings live in the `dev.sorrycc.pinup.app` user defaults.
+The first launch of this version moves the settings of the Swift version over from the `dev.sorrycc.pinup.app` user defaults, which it leaves as they were. History, thumbnails, secrets and failed uploads stay where they were and keep working.
 
 Secrets are in a file rather than the keychain. macOS revokes an ad-hoc signed app's keychain access on every rebuild and then asks for your login password.

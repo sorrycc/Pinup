@@ -1,0 +1,25 @@
+{
+  "name": "Pinup",
+  "identifier": "dev.sorrycc.pinup.app",
+  "version": "0.1.0",
+  "copyright": "MIT License",
+  "main": "./cmd/pinup",
+  "out": "build",
+  "icon": "Resources/Pinup-1024.png",
+  "urlSchemes": ["pinup"],
+  "macos": {
+    "minimumSystemVersion": "14.0",
+    "infoPlist": {
+      "LSUIElement": true,
+      "LSApplicationCategoryType": "public.app-category.utilities",
+      "CFBundleDocumentTypes": [
+        {
+          "CFBundleTypeName": "Image",
+          "CFBundleTypeRole": "Viewer",
+          "LSHandlerRank": "Alternate",
+          "LSItemContentTypes": ["public.image"]
+        }
+      ]
+    }
+  }
+}

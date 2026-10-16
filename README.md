@@ -9,8 +9,8 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/macOS-26%2B-black?logo=apple" alt="macOS 26+">
-  <img src="https://img.shields.io/badge/Swift-6.2-F05138?logo=swift&logoColor=white" alt="Swift 6.2">
+  <img src="https://img.shields.io/badge/macOS-14%2B-black?logo=apple" alt="macOS 14+">
+  <img src="https://img.shields.io/badge/Go-1.27-00ADD8?logo=go&logoColor=white" alt="Go 1.27">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"></a>
 </p>
 
@@ -18,7 +18,7 @@
   <img src="docs/images/history.png" width="720" alt="The Pinup History window">
 </p>
 
-Pinup is written in Swift and AppKit with no third-party dependencies.
+Pinup is written in Go, with its windows drawn by [MyGo](https://github.com/egoist/mygo)'s native UI.
 
 ## Features
 
@@ -31,17 +31,17 @@ Pinup is written in Swift and AppKit with no third-party dependencies.
 
 ## Requirements
 
-- macOS 26 or later
-- Xcode Command Line Tools with Swift 6.2 or later
+- macOS 14 or later
+- Go 1.27 or later
 
 ## Installation
 
 ```sh
-scripts/bundle.sh          # release build; pass `debug` for a debug build
-open build/Pinup.app
+go tool mygo build
+open build/darwin-arm64/Pinup.app
 ```
 
-The script builds with SwiftPM and ad-hoc signs `build/Pinup.app`. Move the app to `/Applications` to keep it.
+MyGo builds and ad-hoc signs `Pinup.app`, and a disk image beside it. Move the app to `/Applications` to keep it.
 
 On first launch, add a host in **Settings > Hosts** and press **Test Upload** to check it.
 
@@ -81,8 +81,8 @@ open "pinup://settings/hosts"                    # or general, shortcuts
 ## Development
 
 ```sh
-scripts/selftest.sh        # run the tests in a temporary folder
-scripts/bundle.sh debug    # debug build
+go test ./...              # run the tests, each in a temporary folder
+scripts/dev.sh             # run with live reload, with data of its own
 ```
 
 See [Development](docs/development.md) for launch flags, environment variables and the project layout.

@@ -6,7 +6,7 @@ In Settings > Hosts, the Upload to menu lists your hosts. **Add S3-Compatible…
 
 Changes save as you type. Test Upload sends a small generated image to the host shown and gives back the link it got, without adding it to History.
 
-Addresses should be `https://`. macOS lets an app use plain `http://` only for `localhost` and IP addresses, such as a MinIO or NAS on your own network; an `http://` address with any other name fails with a message saying so.
+Addresses should be `https://`. Plain `http://` works too, for a MinIO or NAS on your own network, but sends your keys and files unencrypted.
 
 ## S3-compatible provider
 
