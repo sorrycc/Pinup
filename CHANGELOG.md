@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
 
 - Pinup is rewritten in Go with MyGo's native UI. It runs on macOS 14 and
   later, where it needed macOS 26, and builds with `go tool mygo build`.
