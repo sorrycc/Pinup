@@ -46,6 +46,8 @@ PINUP_HOME=/tmp/pinup-test build/darwin-arm64/Pinup.app/Contents/MacOS/Pinup -sh
 
 ## Releases
 
+Write the release notes under `## Unreleased` in `CHANGELOG.md`, as [AGENTS.md](../AGENTS.md) describes, and commit them, then:
+
 ```sh
 scripts/bump.sh patch      # or minor, major, or a version such as 1.2.0
 ```

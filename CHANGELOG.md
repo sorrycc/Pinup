@@ -2,16 +2,13 @@
 
 ## 0.2.0
 
-- Pinup is rewritten in Go with MyGo's native UI. It runs on macOS 14 and
-  later, where it needed macOS 26, and builds with `go tool mygo build`.
-- The first launch moves your settings, hosts and shortcuts over from the
-  Swift version. History, thumbnails, secrets and failed uploads stay where
-  they were and keep working.
-- Settings are kept in `settings.json` in Pinup's folder, so `PINUP_HOME`
-  now gives a copy of Pinup settings of its own too.
-- Plain `http://` addresses work for any host, not only `localhost` and IP
-  addresses.
+- Pinup runs on macOS 14 and later, where it needed macOS 26.
+- The first launch brings over your settings, hosts and shortcuts from the previous version.
+- History, thumbnails, secrets and failed uploads from the previous version keep working.
+- Settings live in `settings.json`, so `PINUP_HOME` gives a separate copy of them too.
+- Plain `http://` addresses work for any host, not only `localhost` and IP addresses.
 - History's day headers stay at the top as their uploads scroll under them.
-- Pinup is signed and notarized, and updates itself: it checks for a new
-  version once a day and installs it when you agree. Check for Updates… in
-  the menu checks now, and Settings > General turns the daily check off.
+- Pinup is signed and notarized, so macOS opens it without a warning.
+- Pinup checks for a new version once a day and installs it when you agree.
+- **Check for Updates…** in the menu checks for a new version now.
+- **Settings → General** turns the daily update check off.
