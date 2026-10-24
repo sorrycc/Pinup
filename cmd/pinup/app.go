@@ -147,7 +147,9 @@ func (a *app) upload(sources []upload.Source) {
 	if len(sources) == 0 {
 		return
 	}
-	opts := imageproc.Options{Conversion: a.s.Conversion, Quality: a.s.Quality, StripLocation: a.s.StripLocation}
+	opts := imageproc.Options{
+		Conversion: a.s.Conversion, Quality: a.s.Quality, Compress: a.s.Compress, StripLocation: a.s.StripLocation,
+	}
 	format := a.s.LinkFormat
 	if !a.up.Upload(sources, a.s.Host(), opts, func(r upload.Result) { a.batchDone(r, format) }) {
 		a.hud.message("Folders can't be uploaded", "Choose the files inside instead.", iconFolder)

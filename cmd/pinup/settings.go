@@ -179,14 +179,20 @@ func (s *settingsWindow) generalPane(c *ui.Context) {
 			}
 		})
 	})
-	card(c, "Transparent images stay out of JPEG, and animations are never converted.", func() {
+	card(c, "Transparent images stay out of JPEG, and animations are never converted or compressed.", func() {
 		formRow(c, "Convert images to", "", func() {
 			if choice(c, "Conversion", &st.Conversion, imageproc.Conversions, imageproc.Conversion.DisplayName) {
 				st.Changed()
 			}
 		})
+		formRow(c, "Compress images",
+			"Re-encodes JPEG and HEIC at this quality and reduces PNGs to 256 colors. A file that wouldn't get smaller uploads as it is.", func() {
+				if ui.Switch(c.Key("compress"), &st.Compress).Label("Compress images").Changed() {
+					st.Changed()
+				}
+			})
 		formRow(c, "Quality", "For JPEG and HEIC.", func() {
-			off := st.Conversion == imageproc.Original
+			off := st.Conversion == imageproc.Original && !st.Compress
 			slider := ui.Slider(c.Key("quality"), &st.Quality, 0.3, 1).Label("Quality").Width(180).Disabled(off)
 			// Saved as the drag goes: the file is small.
 			if slider.Changed() {

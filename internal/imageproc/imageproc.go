@@ -1,7 +1,7 @@
-// Package imageproc prepares files for upload: it converts images to JPEG
-// or HEIC, removes their location and makes History's thumbnails, all
-// through ImageIO, so nothing is decoded that doesn't need to be. It runs
-// off the main thread.
+// Package imageproc prepares files for upload: it converts and compresses
+// images, removes their location and makes History's thumbnails, through
+// ImageIO, so nothing is decoded that doesn't need to be, except the PNGs
+// it reduces to 256 colors. It runs off the main thread.
 package imageproc
 
 import (
@@ -45,8 +45,11 @@ func (c Conversion) DisplayName() string {
 
 // Options says what to do to an image before upload.
 type Options struct {
-	Conversion    Conversion
-	Quality       float64 // 0.1 to 1, for JPEG and HEIC
+	Conversion Conversion
+	Quality    float64 // 0.1 to 1, for JPEG and HEIC
+	// Compress re-encodes JPEG and HEIC at Quality and reduces PNGs to 256
+	// colors, keeping the original when that isn't smaller.
+	Compress      bool
 	StripLocation bool
 }
 
@@ -112,6 +115,13 @@ func Prepare(src, name string, opts Options, scratch string) (File, error) {
 	animated := count > 1
 
 	target := targetType(opts.Conversion, kind, hasAlpha, animated)
+	// Compressing re-encodes JPEG and HEIC in their own format, and PNG
+	// through the quantizer.
+	if target == "" && opts.Compress && !animated && (kind == utiJPEG || kind == utiHEIC) {
+		target = kind
+	}
+	quantizing := target == "" && opts.Compress && !animated && kind == utiPNG
+	compressing := quantizing || target == kind
 	// ImageIO can't write WebP or camera RAW, so removing their location
 	// means converting them: PNG keeps transparency, JPEG suits photos.
 	if target == "" && opts.StripLocation && hasGPS && !writable()[kind] {
@@ -135,53 +145,43 @@ func Prepare(src, name string, opts Options, scratch string) (File, error) {
 	output, outputName := src, name
 
 	switch {
+	case quantizing:
+		// A PNG Go can't read is uploaded as it is.
+		output = filepath.Join(outDir, name)
+		if compressPNG(src, output) != nil {
+			output = src
+		}
 	case target != "":
 		// Re-encode: a new format, at the chosen quality, without GPS when asked.
-		ext := extensionFor(target)
-		outputName = base + "." + ext
+		if target != kind {
+			outputName = base + "." + extensionFor(target)
+		}
 		output = filepath.Join(outDir, outputName)
-		dst := macos.DestinationFile(output, target)
-		if dst == 0 {
-			return File{}, &ProcessingError{fmt.Sprintf("Can't write %s images.", strings.ToUpper(ext))}
-		}
-		defer macos.Release(dst)
-		quality := macos.Float(opts.Quality)
-		defer macos.Release(quality)
-		add := map[macos.Ref]macos.Ref{macos.KeyLossyQuality: quality}
-		if opts.StripLocation && hasGPS {
-			add[macos.KeyGPS] = macos.Null()
-		}
-		dict := macos.Dict(add)
-		defer macos.Release(dict)
-		macos.AddFromSource(dst, source, 0, dict)
-		if !macos.Finalize(dst) {
-			return File{}, &ProcessingError{fmt.Sprintf("Couldn't convert %s to %s.", name, strings.ToUpper(ext))}
+		if err := reencode(source, output, target, opts.Quality, opts.StripLocation && hasGPS); err != nil {
+			return File{}, err
 		}
 	case opts.StripLocation && hasGPS:
-		// Same format, without GPS. JPEG metadata can be rewritten leaving
-		// the pixels as they are; other formats are written again at full
-		// quality, which is lossless for PNG and TIFF.
 		output = filepath.Join(outDir, name)
-		dst := macos.DestinationFile(output, kind)
-		if dst == 0 {
+		if ok, err := stripLocation(source, kind, name, output); err != nil {
+			return File{}, err
+		} else if !ok {
 			return passThrough(src, name)
 		}
-		defer macos.Release(dst)
-		failed := &ProcessingError{fmt.Sprintf("Couldn't remove the location from %s.", name)}
-		if kind == utiJPEG {
-			dict := macos.Dict(map[macos.Ref]macos.Ref{macos.KeyExcludeGPS: macos.True()})
-			defer macos.Release(dict)
-			if !macos.CopySource(dst, source, dict) {
-				return File{}, failed
+	}
+
+	// A compressed file that came out no smaller is not uploaded; the
+	// original is, without its location when asked.
+	if compressing && size(output) >= size(src) {
+		output, outputName = src, name
+		if opts.StripLocation && hasGPS {
+			output = filepath.Join(scratch, "plain", name)
+			if err := os.MkdirAll(filepath.Dir(output), 0o755); err != nil {
+				return File{}, err
 			}
-		} else {
-			one := macos.Float(1)
-			defer macos.Release(one)
-			dict := macos.Dict(map[macos.Ref]macos.Ref{macos.KeyGPS: macos.Null(), macos.KeyLossyQuality: one})
-			defer macos.Release(dict)
-			macos.AddFromSource(dst, source, 0, dict)
-			if !macos.Finalize(dst) {
-				return File{}, failed
+			if ok, err := stripLocation(source, kind, name, output); err != nil {
+				return File{}, err
+			} else if !ok {
+				return passThrough(src, name)
 			}
 		}
 	}
@@ -194,6 +194,69 @@ func Prepare(src, name string, opts Options, scratch string) (File, error) {
 		Path: output, Name: outputName, MIMEType: MIMEType(outputName), Size: info.Size(),
 		Width: int(width), Height: int(height), Thumbnail: thumbnail,
 	}, nil
+}
+
+// reencode writes the first image of source to output as target, at
+// quality, without GPS when asked.
+func reencode(source macos.Ref, output, target string, quality float64, dropGPS bool) error {
+	ext := strings.ToUpper(filepath.Ext(output)[1:])
+	dst := macos.DestinationFile(output, target)
+	if dst == 0 {
+		return &ProcessingError{fmt.Sprintf("Can't write %s images.", ext)}
+	}
+	defer macos.Release(dst)
+	q := macos.Float(quality)
+	defer macos.Release(q)
+	add := map[macos.Ref]macos.Ref{macos.KeyLossyQuality: q}
+	if dropGPS {
+		add[macos.KeyGPS] = macos.Null()
+	}
+	dict := macos.Dict(add)
+	defer macos.Release(dict)
+	macos.AddFromSource(dst, source, 0, dict)
+	if !macos.Finalize(dst) {
+		return &ProcessingError{fmt.Sprintf("Couldn't convert %s to %s.", filepath.Base(output), ext)}
+	}
+	return nil
+}
+
+// stripLocation writes source to output in its own format, kind, without
+// GPS, or reports false when ImageIO can't write kind. JPEG metadata can
+// be rewritten leaving the pixels as they are; other formats are written
+// again at full quality, which is lossless for PNG and TIFF.
+func stripLocation(source macos.Ref, kind, name, output string) (bool, error) {
+	dst := macos.DestinationFile(output, kind)
+	if dst == 0 {
+		return false, nil
+	}
+	defer macos.Release(dst)
+	failed := &ProcessingError{fmt.Sprintf("Couldn't remove the location from %s.", name)}
+	if kind == utiJPEG {
+		dict := macos.Dict(map[macos.Ref]macos.Ref{macos.KeyExcludeGPS: macos.True()})
+		defer macos.Release(dict)
+		if !macos.CopySource(dst, source, dict) {
+			return false, failed
+		}
+		return true, nil
+	}
+	one := macos.Float(1)
+	defer macos.Release(one)
+	dict := macos.Dict(map[macos.Ref]macos.Ref{macos.KeyGPS: macos.Null(), macos.KeyLossyQuality: one})
+	defer macos.Release(dict)
+	macos.AddFromSource(dst, source, 0, dict)
+	if !macos.Finalize(dst) {
+		return false, failed
+	}
+	return true, nil
+}
+
+// size is a file's size, or -1 when it can't be read.
+func size(path string) int64 {
+	info, err := os.Stat(path)
+	if err != nil {
+		return -1
+	}
+	return info.Size()
 }
 
 // targetType is the type to convert to, or "" to keep the file's own.

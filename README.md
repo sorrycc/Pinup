@@ -25,7 +25,7 @@ Pinup is written in Go, with its windows drawn by [MyGo](https://github.com/egoi
 - Upload by dropping files on the menu bar icon, or with global shortcuts for the clipboard and for screenshots.
 - Copy links as Markdown, a plain URL or an HTML `<img>` tag.
 - Upload to any S3-compatible bucket or HTTP upload API, and switch between as many hosts as you add.
-- Convert images to JPEG or HEIC, and strip location data before upload.
+- Convert images to JPEG or HEIC, compress them, and strip location data before upload.
 - Browse, search and re-copy past uploads in History.
 - Script uploads from Shortcuts, Raycast or the shell with `pinup://` URLs.
 

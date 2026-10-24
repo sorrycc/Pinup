@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **Settings → General → Compress images** shrinks JPEG and HEIC uploads at the Quality you set.
+- Compressed PNGs drop to 256 colors and keep their transparency and color profile.
+- A file that compressing wouldn't make smaller uploads as it is.
+
 ## 0.2.0
 
 - Pinup runs on macOS 14 and later, where it needed macOS 26.

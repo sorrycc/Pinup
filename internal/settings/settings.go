@@ -132,6 +132,7 @@ type Prefs struct {
 	LinkFormat    LinkFormat           `json:"linkFormat"`
 	Conversion    imageproc.Conversion `json:"conversion"`
 	Quality       float64              `json:"quality"`
+	Compress      bool                 `json:"compress"`
 	StripLocation bool                 `json:"stripLocation"`
 	PlaySound     bool                 `json:"playSound"`
 	// The shortcuts are accelerators, such as Alt+Shift+Cmd+U; "" is one

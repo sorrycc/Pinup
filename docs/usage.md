@@ -15,6 +15,8 @@ Pinup uploads up to three files at once, in the order you gave them. When a batc
 
 Links are copied as Markdown, a plain URL or an HTML `<img>` tag. Choose the format in Settings > General.
 
+Settings > General can also convert images to JPEG or HEIC and compress them before upload. Compressing re-encodes JPEG and HEIC at the Quality you set, and reduces PNGs to 256 colors while keeping their transparency and color profile. A file that compressing wouldn't make smaller uploads as it is. Animations are never converted or compressed.
+
 Screenshots need the Screen Recording permission. macOS asks for it the first time.
 
 ## Failed uploads
