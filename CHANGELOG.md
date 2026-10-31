@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
 
 - **Settings → General → Compress images** shrinks JPEG and HEIC uploads at the Quality you set.
 - Compressed PNGs drop to 256 colors and keep their transparency and color profile.
